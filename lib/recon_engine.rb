@@ -1,0 +1,28 @@
+# frozen_string_literal: true
+
+require "bigdecimal"
+require "bigdecimal/util"
+require "csv"
+require "date"
+require "digest"
+require "json"
+require "optparse"
+require "set"
+require "time"
+
+module ReconEngine
+  # Base class for every error this library raises deliberately.
+  Error = Class.new(StandardError)
+
+  # Raised when an input file does not look like what we were promised.
+  InputError      = Class.new(Error)
+  # Raised when the agent layer cannot produce a schema-valid finding.
+  AgentError      = Class.new(Error)
+  # Raised when an LLM provider is misconfigured or unreachable.
+  ProviderError   = Class.new(Error)
+end
+
+require "recon_engine/version"
+require "recon_engine/money"
+require "recon_engine/transaction"
+require "recon_engine/config"
