@@ -1,0 +1,242 @@
+# frozen_string_literal: true
+
+module ReconEngine
+  module Reporting
+    # The human-facing report: whether it tied, how much money is involved, the
+    # likely causes, and only then individual rows. Clusters lead and raw breaks
+    # are summarised.
+    class CliReport
+      WIDTH = 78
+
+      # ANSI colour, suppressed when stdout is not a TTY so that piping to a file
+      # or capturing in CI does not fill the output with escape codes.
+      COLORS = { red: 31, green: 32, yellow: 33, blue: 34, grey: 90 }.freeze
+
+      # Unicode glyphs when the terminal can render them, ASCII otherwise. A
+      # Windows console on the legacy code page turns "·" into mojibake.
+      GLYPHS = {
+        unicode: { sep: "·", ellipsis: "…", arrow: "→", dash: "—" },
+        ascii: { sep: "|", ellipsis: "...", arrow: "->", dash: "--" }
+      }.freeze
+
+      def self.unicode_terminal?
+        encoding = $stdout.external_encoding || Encoding.default_external
+        encoding.to_s.match?(/UTF-8/i)
+      rescue StandardError
+        false
+      end
+
+      def initialize(report, color: $stdout.tty?, unicode: self.class.unicode_terminal?)
+        @report = report
+        @color  = color
+        @glyphs = GLYPHS.fetch(unicode ? :unicode : :ascii)
+      end
+
+      def render
+        sections = [
+          header,
+          sources_section,
+          matching_section,
+          summary_section,
+          clusters_section,
+          footer
+        ]
+        output = "#{sections.compact.join("\n")}\n"
+        @glyphs.equal?(GLYPHS[:ascii]) ? asciify(output) : output
+      end
+
+      private
+
+      attr_reader :report
+
+      def sep      = @glyphs[:sep]
+      def ellipsis = @glyphs[:ellipsis]
+      def arrow    = @glyphs[:arrow]
+      def dash     = @glyphs[:dash]
+
+      def header
+        [
+          rule("="),
+          center("RECONCILIATION REPORT"),
+          center("recon-engine v#{ReconEngine::VERSION}  #{sep}  #{report.started_at.strftime('%Y-%m-%d %H:%M:%S %Z')}"),
+          rule("=")
+        ].join("\n")
+      end
+
+      def sources_section
+        lines = ["INPUTS"]
+        report.inputs.each do |input|
+          lines << "  #{input[:role].to_s.ljust(10)} #{input[:path]}"
+          lines << "  #{' '.ljust(10)} #{input[:rows]} rows #{sep} #{input[:digest][0, 12]}#{ellipsis}"
+        end
+        lines << ""
+        lines << "  ledger    #{report.ledger_profile.row_count} rows, " \
+                 "#{Money.humanize(report.ledger_profile.total_cents)}, " \
+                 "#{report.ledger_profile.accounts.size} accounts"
+        lines << "  warehouse #{report.warehouse_profile.row_count} rows, " \
+                 "#{Money.humanize(report.warehouse_profile.total_cents)}, " \
+                 "#{report.warehouse_profile.accounts.size} accounts"
+        lines.join("\n")
+      end
+
+      def matching_section
+        result = report.match_result
+        lines = ["", "MATCHING"]
+        lines << "  matched sets      #{result.matches.length} " \
+                 "(#{format('%.2f', result.match_rate * 100)}% of ledger rows)"
+        result.strategy_counts.each do |strategy, count|
+          lines << "    #{strategy.to_s.ljust(16)}#{count}"
+        end
+        lines << "  unmatched ledger    #{result.unmatched_ledger.length}"
+        lines << "  unmatched warehouse #{result.unmatched_warehouse.length}"
+        lines.join("\n")
+      end
+
+      def summary_section
+        lines = ["", rule("-"), "SUMMARY", rule("-")]
+
+        if report.clean?
+          lines << colorize("  CLEAN #{dash} the two sources agree under the configured tolerances.", :green)
+          return lines.join("\n")
+        end
+
+        lines << "  #{colorize(report.break_count.to_s, :red)} breaks in " \
+                 "#{report.clusters.length} clusters"
+        lines << "  row-level impact  #{colorize(Money.humanize(report.row_level_impact_cents), :yellow)}"
+        lines << ""
+        report.breaks_by_type.each do |type, count|
+          label = Breaks::BreakRecord::TYPES.fetch(type.to_sym)[:label]
+          lines << "    #{count.to_s.rjust(6)}  #{label}"
+        end
+
+        if report.agent_ran?
+          lines << ""
+          lines << "  BY CLASSIFICATION"
+          report.classification_summary.each do |classification, stats|
+            lines << "    #{classification.ljust(22)}#{stats[:clusters].to_s.rjust(3)} clusters #{sep} " \
+                     "#{stats[:breaks].to_s.rjust(6)} breaks #{sep} #{Money.humanize(stats[:magnitude_cents])}"
+          end
+        end
+
+        lines.join("\n")
+      end
+
+      def clusters_section
+        return nil if report.clusters.empty?
+
+        lines = ["", rule("-"), "FINDINGS", rule("-")]
+        report.clusters.each_with_index do |cluster, index|
+          lines.concat(cluster_block(cluster, index + 1))
+        end
+        lines.join("\n")
+      end
+
+      def cluster_block(cluster, position)
+        finding = report.finding_for(cluster)
+        lines = []
+        lines << ""
+        lines << "#{position}. #{cluster.label} #{dash} #{cluster.count} break(s), " \
+                 "#{Money.humanize(cluster.magnitude_cents)}"
+        lines << colorize("   #{cluster.id} #{sep} #{signature_text(cluster)}", :grey)
+
+        if finding.nil?
+          lines << colorize("   not investigated (agent disabled or cluster budget reached)", :grey)
+          return lines
+        end
+
+        lines << "   #{colorize(finding.classification, classification_color(finding))} " \
+                 "#{colorize("(confidence #{finding.confidence})", :grey)}"
+        lines << wrap(finding.explanation, "   ")
+        finding.evidence.first(3).each { |item| lines << wrap("- #{item}", "     ") }
+        lines << wrap("#{arrow} #{finding.suggested_action}", "   ")
+        lines << colorize("   #{provenance_text(finding)}", :grey)
+        lines
+      end
+
+      def signature_text(cluster)
+        cluster.signature.map { |k, v| "#{k}=#{Array(v).join('+')}" }.join(" ")
+      end
+
+      def provenance_text(finding)
+        parts = ["#{finding.provider}/#{finding.model}"]
+        parts << (finding.model_backed ? "model-backed" : "scripted stand-in, not a model")
+        parts << "#{finding.tool_calls} tool calls"
+        parts << "#{finding.repairs} schema repairs" if finding.repairs.positive?
+        parts << "DEGRADED" if finding.degraded
+        parts.join(" #{sep} ")
+      end
+
+      def classification_color(finding)
+        return :grey if finding.degraded
+
+        case finding.classification
+        when "TIMING_DIFFERENCE", "ROUNDING" then :blue
+        when "GENUINE_DISCREPANCY", "MISSING_IN_TARGET" then :red
+        when "UNKNOWN" then :grey
+        else :yellow
+        end
+      end
+
+      def footer
+        [
+          "",
+          rule("="),
+          "  fingerprint  #{report.deterministic_fingerprint[0, 32]}#{ellipsis}",
+          "  duration     #{format('%.3f', report.duration_seconds)}s",
+          agent_footer,
+          rule("=")
+        ].compact.join("\n")
+      end
+
+      def agent_footer
+        return "  agent        disabled" unless report.config.agent_enabled
+
+        backing = report.model_backed_agent? ? "model-backed" : "scripted stand-in (no model called)"
+        "  agent        #{report.config.agent_provider} #{sep} #{backing} #{sep} " \
+          "#{report.findings.length} clusters investigated"
+      end
+
+      # --- formatting helpers ------------------------------------------------
+
+      def rule(char) = char * WIDTH
+
+      def center(text)
+        padding = [(WIDTH - text.length) / 2, 0].max
+        (" " * padding) + text
+      end
+
+      def wrap(text, indent, width: WIDTH)
+        limit = width - indent.length
+        words = text.to_s.split(/\s+/)
+        lines = words.each_with_object([[]]) do |word, acc|
+          if (acc.last + [word]).join(" ").length > limit && !acc.last.empty?
+            acc << [word]
+          else
+            acc.last << word
+          end
+        end
+        lines.map { |line| indent + line.join(" ") }.join("\n")
+      end
+
+      # Agent explanations are free text written by a model, and models emit
+      # em-dashes and curly quotes freely. Transliterating at the very end
+      # catches whatever the provider decided to send.
+      TRANSLITERATIONS = {
+        "—" => "--", "–" => "-", "·" => "|", "…" => "...", "→" => "->",
+        "“" => '"', "”" => '"', "‘" => "'", "’" => "'", "•" => "*", " " => " "
+      }.freeze
+
+      def asciify(text)
+        swapped = text.gsub(Regexp.union(TRANSLITERATIONS.keys), TRANSLITERATIONS)
+        swapped.encode("US-ASCII", invalid: :replace, undef: :replace, replace: "?")
+               .encode(text.encoding)
+      end
+
+      def colorize(text, color)
+        return text unless @color && COLORS.key?(color)
+
+        "\e[#{COLORS[color]}m#{text}\e[0m"
+      end
+    end
+  end
+end
