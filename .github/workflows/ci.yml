@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.2", "3.3", "3.4"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Unit and integration specs (LLM mocked, no network)
+        run: bundle exec rake spec
+
+      # The golden-set evaluation runs against the offline stand-in, so it is
+      # deterministic, free, and safe to gate every push on. Scoring a hosted
+      # model is the same command with RECON_EVAL_PROVIDER set, run on demand.
+      - name: Golden-set evaluation (offline provider)
+        run: bundle exec rake eval
+
+      # End-to-end smoke test. `demo` exits 1 because the synthetic data contains
+      # deliberate breaks. That is success, not failure, so the exit code is
+      # checked explicitly rather than swallowed with `|| true`.
+      - name: End-to-end demo
+        run: |
+          set +e
+          bundle exec ruby bin/recon demo --dir "$RUNNER_TEMP/data" --rows 500 --json "$RUNNER_TEMP/report.json" --quiet
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "expected exit code 1 (breaks found), got $status"
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/report.json"
+
+      - name: Idempotency (the same bytes must produce the same fingerprint)
+        run: |
+          bundle exec ruby bin/recon generate --dir "$RUNNER_TEMP/idem" --seed 42 --rows 500 >/dev/null
+          for i in 1 2; do
+            bundle exec ruby bin/recon run \
+              --ledger "$RUNNER_TEMP/idem/ledger.csv" \
+              --warehouse "$RUNNER_TEMP/idem/warehouse.csv" \
+              --json "$RUNNER_TEMP/run$i.json" --quiet >/dev/null || true
+          done
+          a=$(ruby -rjson -e 'puts JSON.parse(File.read(ARGV[0]))["run"]["deterministic_fingerprint"]' "$RUNNER_TEMP/run1.json")
+          b=$(ruby -rjson -e 'puts JSON.parse(File.read(ARGV[0]))["run"]["deterministic_fingerprint"]' "$RUNNER_TEMP/run2.json")
+          echo "fingerprints: $a / $b"
+          [ "$a" = "$b" ]
