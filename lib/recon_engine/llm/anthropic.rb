@@ -10,7 +10,7 @@ module ReconEngine
     # Model names move; override with --model or RECON_AGENT_MODEL rather than
     # editing this file.
     class Anthropic < HttpProvider
-      ENDPOINT   = "https://api.anthropic.com/v1/messages"
+      ENDPOINT = "https://api.anthropic.com/v1/messages"
       API_VERSION = "2023-06-01"
 
       def self.default_model = ENV.fetch("RECON_AGENT_MODEL", "claude-3-5-haiku-latest")

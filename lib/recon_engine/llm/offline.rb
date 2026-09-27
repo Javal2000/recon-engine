@@ -8,6 +8,16 @@ module ReconEngine
     # and gives the golden-set eval a baseline to compare real models against.
     # Reports mark its findings as not model-backed.
     class Offline < Client
+      # Not guessed. A control-total delta comes from some mix of row-level
+      # breaks in the same partition, and attributing it means cross-referencing
+      # them, which a rule table can't do and a model can.
+      CONTROL_TOTAL_VERDICT = [
+        "UNKNOWN",
+        "Daily totals do not tie for this currency, but a control-total delta is a consequence of row-level " \
+        "breaks rather than a cause. Attributing it requires cross-referencing the row-level clusters in the " \
+        "same partitions, which the scripted provider does not do."
+      ].freeze
+
       def self.default_model = "scripted-v1"
 
       def model_backed? = false
@@ -72,71 +82,75 @@ module ReconEngine
       # The rule table, kept as a plain `case` so it's obvious how little of the
       # offline demo is actual inference.
       def decide(cluster, observations)
-        sample    = Array(cluster["sample_breaks"]).first || {}
-        details   = sample["details"] || {}
-        adjacency = observations.find { |o| o.key?("candidate_matches_in_adjacent_period") }
-        adjacent  = adjacency ? adjacency["candidate_matches_in_adjacent_period"].to_i : 0
+        details = (Array(cluster["sample_breaks"]).first || {})["details"] || {}
 
         case cluster["type"]
-        when "missing_in_target"
-          if adjacent.positive?
-            ["TIMING_DIFFERENCE",
-             "A row with the same account, currency and amount is present in the warehouse in an adjacent " \
-             "period, which is the signature of a settlement lag rather than a dropped record."]
-          else
-            ["MISSING_IN_TARGET",
-             "No corresponding warehouse row exists on the break date or in the adjacent periods, so the " \
-             "record did not arrive at all."]
-          end
-        when "orphan_in_target"
-          if adjacent.positive?
-            ["TIMING_DIFFERENCE",
-             "The ledger carries an equivalent row in an adjacent period, so the warehouse row is early or " \
-             "late rather than fabricated."]
-          else
-            ["GENUINE_DISCREPANCY",
-             "The warehouse contains a row with no ledger counterpart in the surrounding window."]
-          end
-        when "duplicate"
-          ["DUPLICATE_IN_TARGET",
-           "The same business key appears #{details['occurrences']} times in #{details['source']}, which is " \
-           "at-least-once delivery replaying a record rather than genuine repeated activity."]
-        when "value_mismatch"
-          value_mismatch_verdict(details)
-        when "control_total_mismatch"
-          # Not guessed. A control-total delta comes from some mix of row-level
-          # breaks in the same partition, and attributing it means
-          # cross-referencing them, which a rule table can't do and a model can.
-          ["UNKNOWN",
-           "Daily totals do not tie for this currency, but a control-total delta is a consequence of row-level " \
-           "breaks rather than a cause. Attributing it requires cross-referencing the row-level clusters in the " \
-           "same partitions, which the scripted provider does not do."]
-        when "row_count_mismatch"
-          if details["delta"].to_i.negative?
-            ["MISSING_IN_TARGET", "The warehouse holds fewer rows than the ledger for this partition."]
-          else
-            ["DUPLICATE_IN_TARGET", "The warehouse holds more rows than the ledger for this partition."]
-          end
-        when "schema_drift"
-          # The check has already established what changed, so the break's shape
-          # is the answer and a rule table does as well as a model here.
-          ["SCHEMA_DRIFT", schema_drift_reason(details)]
+        when "missing_in_target"      then missing_verdict(adjacent_matches(observations))
+        when "orphan_in_target"       then orphan_verdict(adjacent_matches(observations))
+        when "duplicate"              then duplicate_verdict(details)
+        when "value_mismatch"         then value_mismatch_verdict(details)
+        when "control_total_mismatch" then CONTROL_TOTAL_VERDICT
+        when "row_count_mismatch"     then row_count_verdict(details)
+        # The check has already established what changed, so the break's shape
+        # is the answer and a rule table does as well as a model here.
+        when "schema_drift"           then ["SCHEMA_DRIFT", schema_drift_reason(details)]
+        else ["UNKNOWN", "No rule covers break type #{cluster["type"]}."]
+        end
+      end
+
+      def adjacent_matches(observations)
+        adjacency = observations.find { |o| o.key?("candidate_matches_in_adjacent_period") }
+        adjacency ? adjacency["candidate_matches_in_adjacent_period"].to_i : 0
+      end
+
+      def missing_verdict(adjacent)
+        if adjacent.positive?
+          ["TIMING_DIFFERENCE",
+           "A row with the same account, currency and amount is present in the warehouse in an adjacent " \
+           "period, which is the signature of a settlement lag rather than a dropped record."]
         else
-          ["UNKNOWN", "No rule covers break type #{cluster['type']}."]
+          ["MISSING_IN_TARGET",
+           "No corresponding warehouse row exists on the break date or in the adjacent periods, so the " \
+           "record did not arrive at all."]
+        end
+      end
+
+      def orphan_verdict(adjacent)
+        if adjacent.positive?
+          ["TIMING_DIFFERENCE",
+           "The ledger carries an equivalent row in an adjacent period, so the warehouse row is early or " \
+           "late rather than fabricated."]
+        else
+          ["GENUINE_DISCREPANCY",
+           "The warehouse contains a row with no ledger counterpart in the surrounding window."]
+        end
+      end
+
+      def duplicate_verdict(details)
+        ["DUPLICATE_IN_TARGET",
+         "The same business key appears #{details["occurrences"]} times in #{details["source"]}, which is " \
+         "at-least-once delivery replaying a record rather than genuine repeated activity."]
+      end
+
+      def row_count_verdict(details)
+        if details["delta"].to_i.negative?
+          ["MISSING_IN_TARGET", "The warehouse holds fewer rows than the ledger for this partition."]
+        else
+          ["DUPLICATE_IN_TARGET", "The warehouse holds more rows than the ledger for this partition."]
         end
       end
 
       def schema_drift_reason(details)
         case details["kind"]
         when "column_missing"
-          "The ledger column #{details['column'].inspect} has no warehouse counterpart, so whatever it carried " \
+          "The ledger column #{details["column"].inspect} has no warehouse counterpart, so whatever it carried " \
           "is not being loaded."
         when "column_added"
-          "The warehouse carries a column #{details['column'].inspect} the ledger does not, which is a " \
+          "The warehouse carries a column #{details["column"].inspect} the ledger does not, which is a " \
           "downstream transformation rather than source data."
         else
-          "Column #{details['column'].inspect} is #{details['ledger_type']} upstream and " \
-          "#{details['warehouse_type']} downstream; a type narrowing in transit silently loses precision."
+          "Column #{details["column"].inspect} is #{details["ledger_type"]} upstream and " \
+          "#{details["warehouse_type"]} downstream; a type narrowing in transit silently loses precision."
         end
       end
 
@@ -144,15 +158,15 @@ module ReconEngine
         case details["band"]
         when "sub_tolerance"
           ["ROUNDING",
-           "Matched rows differ by #{details['amount_delta']}, inside the configured tolerance: a precision " \
+           "Matched rows differ by #{details["amount_delta"]}, inside the configured tolerance: a precision " \
            "loss in transit, not a value change."]
         when "date_shifted"
           ["TIMING_DIFFERENCE",
-           "Matched rows agree on amount but the warehouse posted date is #{details['date_delta_days']} day(s) " \
+           "Matched rows agree on amount but the warehouse posted date is #{details["date_delta_days"]} day(s) " \
            "later, consistent with T+1 settlement."]
         else
           ["GENUINE_DISCREPANCY",
-           "Matched rows disagree on #{Array(details['fields']).join(' and ')} by more than tolerance."]
+           "Matched rows disagree on #{Array(details["fields"]).join(" and ")} by more than tolerance."]
         end
       end
 
@@ -164,7 +178,7 @@ module ReconEngine
 
       def evidence_for(cluster, observations)
         [
-          "cluster #{cluster['id']} contains #{cluster['break_count']} break(s) worth #{cluster['magnitude']}",
+          "cluster #{cluster["id"]} contains #{cluster["break_count"]} break(s) worth #{cluster["magnitude"]}",
           "tool observations: #{observations.length}"
         ]
       end

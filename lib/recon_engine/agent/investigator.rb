@@ -18,68 +18,68 @@ module ReconEngine
         @config = config
       end
 
+      # Two separate budgets, because a step and a repair are different
+      # failures. Burning the step budget means the model is investigating and
+      # not converging; burning the repair budget means it cannot produce valid
+      # JSON at all. Counting them together would let a model that never emits
+      # valid output look like one that simply needed more time.
       def investigate(cluster)
         @usage_before = @client.usage
         @progress     = { steps: 0, tool_calls: 0, repairs: 0 }
-        transcript = [{ role: "user", content: Prompt.initial(cluster, @tools) }]
-        steps      = 0
-        repairs    = 0
-        tool_calls = 0
+        transcript    = [{ role: "user", content: Prompt.initial(cluster, @tools) }]
 
-        attempts     = 0
-        max_steps    = @config.agent_max_steps
-        max_repairs  = MAX_REPAIRS_PER_STEP * max_steps
-        max_attempts = max_steps + max_repairs
+        (max_steps + max_repairs).times do
+          break if @progress[:steps] >= max_steps
 
-        # Two separate budgets, because a step and a repair are different
-        # failures. Burning the step budget means the model is investigating and
-        # not converging; burning the repair budget means it cannot produce valid
-        # JSON at all. Counting them together would let a model that never emits
-        # valid output look like one that simply needed more time.
-        while steps < max_steps && attempts < max_attempts
-          attempts += 1
-          raw = @client.complete(system: Prompt::SYSTEM, transcript: transcript)
-          step, errors = Schema.parse_step(raw, tool_names: Tools::NAMES)
-
-          if errors.any?
-            repairs += 1
-            @progress[:repairs] = repairs
-            if repairs > max_repairs
-              return degraded(cluster, "model repeatedly returned schema-invalid output: #{errors.first}",
-                              steps, tool_calls, repairs)
-            end
-
-            transcript << { role: "assistant", content: raw.to_s }
-            transcript << { role: "user", content: Prompt.repair(errors) }
-            next
-          end
-
-          steps += 1
-          @progress[:steps] = steps
-
-          case step["action"]
-          when "classify"
-            return finding(cluster, step, steps, tool_calls, repairs)
-          when "use_tool"
-            tool_calls += 1
-            @progress[:tool_calls] = tool_calls
-            result = @tools.call(step["tool"], step["arguments"])
-            transcript << { role: "assistant", content: JSON.generate(step) }
-            transcript << { role: "user", content: Prompt.observation(step["tool"], result) }
-          end
+          outcome = take_turn(cluster, transcript)
+          return outcome if outcome
         end
 
-        degraded(cluster, "reached the step budget (#{max_steps} steps) without classifying",
-                 steps, tool_calls, repairs)
+        degraded(cluster, "reached the step budget (#{max_steps} steps) without classifying")
       rescue ProviderError, AgentError => e
         # Report how far the investigation got before the provider failed, not
         # zeros: the calls that did succeed were real and were paid for.
-        degraded(cluster, e.message, *@progress.values_at(:steps, :tool_calls, :repairs))
+        degraded(cluster, e.message)
       end
 
       private
 
-      def finding(cluster, step, steps, tool_calls, repairs)
+      def max_steps   = @config.agent_max_steps
+      def max_repairs = MAX_REPAIRS_PER_STEP * max_steps
+
+      # One model turn. Returns a Finding once the investigation is over, or nil
+      # to keep going.
+      def take_turn(cluster, transcript)
+        raw = @client.complete(system: Prompt::SYSTEM, transcript: transcript)
+        step, errors = Schema.parse_step(raw, tool_names: Tools::NAMES)
+        return repair(cluster, transcript, raw, errors) if errors.any?
+
+        @progress[:steps] += 1
+        return finding(cluster, step) if step["action"] == "classify"
+
+        use_tool(transcript, step) if step["action"] == "use_tool"
+        nil
+      end
+
+      def repair(cluster, transcript, raw, errors)
+        @progress[:repairs] += 1
+        if @progress[:repairs] > max_repairs
+          return degraded(cluster, "model repeatedly returned schema-invalid output: #{errors.first}")
+        end
+
+        transcript << { role: "assistant", content: raw.to_s }
+        transcript << { role: "user", content: Prompt.repair(errors) }
+        nil
+      end
+
+      def use_tool(transcript, step)
+        @progress[:tool_calls] += 1
+        result = @tools.call(step["tool"], step["arguments"])
+        transcript << { role: "assistant", content: JSON.generate(step) }
+        transcript << { role: "user", content: Prompt.observation(step["tool"], result) }
+      end
+
+      def finding(cluster, step)
         Finding.new(
           cluster_id: cluster.id,
           classification: step["classification"],
@@ -87,30 +87,15 @@ module ReconEngine
           evidence: step["evidence"],
           explanation: step["explanation"].strip,
           suggested_action: step["suggested_action"].strip,
-          provider: @client.name,
-          model: @client.model,
-          model_backed: @client.model_backed?,
-          steps: steps,
-          tool_calls: tool_calls,
-          repairs: repairs,
-          degraded: false,
-          error: nil,
-          usage: spent
+          provider: @client.name, model: @client.model, model_backed: @client.model_backed?,
+          **@progress, degraded: false, error: nil, usage: spent
         )
       end
 
-      def degraded(cluster, reason, steps, tool_calls, repairs)
-        Finding.degraded_for(
-          cluster.id,
-          provider: @client.name,
-          model: @client.model,
-          model_backed: @client.model_backed?,
-          reason: reason,
-          steps: steps,
-          tool_calls: tool_calls,
-          repairs: repairs,
-          usage: spent
-        )
+      def degraded(cluster, reason)
+        Finding.degraded_for(cluster.id, provider: @client.name, model: @client.model,
+                                         model_backed: @client.model_backed?, reason: reason,
+                                         **@progress, usage: spent)
       end
 
       # What this cluster cost, as opposed to the client's running total.

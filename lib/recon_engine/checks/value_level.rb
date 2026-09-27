@@ -53,7 +53,12 @@ module ReconEngine
 
       def band_for(match, fields)
         if fields.include?("amount")
-          Money.within_tolerance?(match.warehouse_cents, match.ledger_cents, config.tolerance_cents) ? "sub_tolerance" : "material"
+          if Money.within_tolerance?(match.warehouse_cents, match.ledger_cents,
+                                     config.tolerance_cents)
+            "sub_tolerance"
+          else
+            "material"
+          end
         elsif fields.include?("posted_date")
           "date_shifted"
         else

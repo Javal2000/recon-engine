@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: RuboCop
+        run: bundle exec rubocop
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -21,8 +34,11 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
-      - name: Unit and integration specs (LLM mocked, no network)
+      # Fails if line or branch coverage drops below the floor in spec_helper.
+      - name: Unit and integration specs with coverage (LLM mocked, no network)
         run: bundle exec rake spec
+        env:
+          COVERAGE: "1"
 
       # The golden-set evaluation runs against the offline stand-in, so it is
       # deterministic, free, and safe to gate every push on. Scoring a hosted

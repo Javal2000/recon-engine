@@ -14,50 +14,65 @@ require "recon_engine"
 require "benchmark"
 require "objspace"
 
-include ReconEngine
+# Generates data at each size, times each phase, and prints a Markdown row.
+class ThroughputBenchmark
+  include ReconEngine
 
-sizes  = ENV.fetch("BENCH_ROWS", "10000,100000").split(",").map { |n| Integer(n) }
-config = Config.build(agent_enabled: false)
+  HEADER = [
+    "| Ledger rows | Profile | Load | Match | Check + cluster | Total | Rows/s | Heap | Breaks |",
+    "|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+  ].freeze
 
-puts "| Ledger rows | Profile | Load | Match | Check + cluster | Total | Rows/s | Heap | Breaks |"
-puts "|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
-
-sizes.each do |rows|
-  Dir.mktmpdir("recon-bench") do |dir|
-    manifest  = Generator.new(seed: 42, rows: rows).write(dir)
-    ledger    = Sources::CsvSource.new(manifest["paths"]["ledger"], name: :ledger)
-    warehouse = Sources::CsvSource.new(manifest["paths"]["warehouse"], name: :warehouse)
-    GC.start
-
-    profiles = matched = context = nil
-    ledger_rows = warehouse_rows = nil
-    clusters = []
-
-    timings = {
-      profile: Benchmark.realtime { profiles = [Sources::Profile.build(ledger), Sources::Profile.build(warehouse)] },
-      load: Benchmark.realtime { ledger_rows = ledger.to_a; warehouse_rows = warehouse.to_a },
-      match: Benchmark.realtime do
-        matched = Matching::Engine.new(config).call(ledger: ledger_rows, warehouse: warehouse_rows)
-      end
-    }
-
-    GC.start
-    heap_mb = ObjectSpace.memsize_of_all / 1024.0 / 1024
-
-    timings[:check] = Benchmark.realtime do
-      context = Checks::Context.new(config: config, match_result: matched,
-                                    ledger_profile: profiles[0], warehouse_profile: profiles[1],
-                                    ledger_rows: ledger_rows, warehouse_rows: warehouse_rows)
-      breaks   = Checks::Base.all.flat_map { |check| check.new(config).call(context) }
-      clusters = Breaks::Clusterer.call(breaks)
-    end
-
-    total = timings.values.sum
-    rate  = (ledger_rows.length + warehouse_rows.length) / total
-    puts format("| %<rows>s | %<p>.2fs | %<l>.2fs | %<m>.2fs | %<c>.2fs | %<t>.2fs | %<rate>s | %<heap>.0f MB | %<b>d |",
-                rows: rows.to_s.reverse.scan(/\d{1,3}/).join(",").reverse,
-                p: timings[:profile], l: timings[:load], m: timings[:match], c: timings[:check], t: total,
-                rate: rate.round.to_s.reverse.scan(/\d{1,3}/).join(",").reverse, heap: heap_mb,
-                b: clusters.sum(&:count))
+  def initialize(sizes)
+    @sizes  = sizes
+    @config = Config.build(agent_enabled: false)
   end
+
+  def run
+    puts HEADER
+    @sizes.each { |rows| Dir.mktmpdir("recon-bench") { |dir| puts measure(rows, dir) } }
+  end
+
+  private
+
+  def measure(rows, dir)
+    manifest = Generator.new(seed: 42, rows: rows).write(dir)
+    sources  = %i[ledger warehouse].map { |name| Sources::CsvSource.new(manifest["paths"][name.to_s], name: name) }
+    GC.start
+
+    timings = {}
+    timings[:profile] = Benchmark.realtime { @profiles = sources.map { |source| Sources::Profile.build(source) } }
+    timings[:load]    = Benchmark.realtime { @rows = sources.map(&:to_a) }
+    timings[:match]   = Benchmark.realtime { @matched = match(*@rows) }
+    heap_mb = heap_megabytes
+    timings[:check] = Benchmark.realtime { @breaks = Breaks::Clusterer.call(check_all).sum(&:count) }
+
+    table_row(rows, timings, heap_mb)
+  end
+
+  def match(ledger, warehouse) = Matching::Engine.new(@config).call(ledger: ledger, warehouse: warehouse)
+
+  def check_all
+    context = Checks::Context.new(config: @config, match_result: @matched,
+                                  ledger_profile: @profiles[0], warehouse_profile: @profiles[1],
+                                  ledger_rows: @rows[0], warehouse_rows: @rows[1])
+    Checks::Base.all.flat_map { |check| check.new(@config).call(context) }
+  end
+
+  def heap_megabytes
+    GC.start
+    ObjectSpace.memsize_of_all / 1024.0 / 1024
+  end
+
+  def table_row(rows, timings, heap_mb)
+    total = timings.values.sum
+    rate  = @rows.sum(&:length) / total
+    cells = [group(rows), *timings.values_at(:profile, :load, :match, :check).map { |t| format("%.2fs", t) },
+             format("%.2fs", total), group(rate.round), format("%.0f MB", heap_mb), @breaks]
+    "| #{cells.join(" | ")} |"
+  end
+
+  def group(number) = number.to_s.reverse.scan(/\d{1,3}/).join(",").reverse
 end
+
+ThroughputBenchmark.new(ENV.fetch("BENCH_ROWS", "10000,100000").split(",").map { |n| Integer(n) }).run

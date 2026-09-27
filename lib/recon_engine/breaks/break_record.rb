@@ -10,10 +10,10 @@ module ReconEngine
       # Only row-level magnitudes reach the headline impact. Otherwise a missing
       # row is counted twice: once as itself, once as the control total it moved.
       TYPES = {
-        missing_in_target: { level: :row,       label: "Missing in warehouse" },
-        orphan_in_target: { level: :row,       label: "Orphan in warehouse" },
-        duplicate: { level: :row,       label: "Duplicate business key" },
-        value_mismatch: { level: :row,       label: "Matched but values disagree" },
+        missing_in_target: { level: :row, label: "Missing in warehouse" },
+        orphan_in_target: { level: :row, label: "Orphan in warehouse" },
+        duplicate: { level: :row, label: "Duplicate business key" },
+        value_mismatch: { level: :row, label: "Matched but values disagree" },
         control_total_mismatch: { level: :aggregate, label: "Control total does not tie" },
         row_count_mismatch: { level: :aggregate, label: "Row count does not tie" },
         # Aggregate, because it is a property of the dataset rather than of any

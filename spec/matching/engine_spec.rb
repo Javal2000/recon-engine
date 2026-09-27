@@ -121,19 +121,11 @@ RSpec.describe ReconEngine::Matching::Engine do
 
   describe "N-to-one matching" do
     it "matches one ledger deposit against several warehouse legs" do
-      result = run(
-        ledger(id: nil, amount: "300.00"),
-        warehouse(
-          { id: nil, amount: "120.00" },
-          { id: nil, amount: "100.00" },
-          { id: nil, amount: "80.00" }
-        )
-      )
+      legs   = warehouse({ id: nil, amount: "120.00" }, { id: nil, amount: "100.00" }, { id: nil, amount: "80.00" })
+      result = run(ledger(id: nil, amount: "300.00"), legs)
 
-      match = result.matches.first
-      expect(match.strategy).to eq(:split)
-      expect(match.warehouse_rows.length).to eq(3)
-      expect(match.amount_delta_cents).to eq(0)
+      expect(result.matches.first).to have_attributes(strategy: :split, amount_delta_cents: 0)
+      expect(result.matches.first.warehouse_rows.length).to eq(3)
       expect(result.unmatched_warehouse).to be_empty
     end
 
@@ -148,7 +140,7 @@ RSpec.describe ReconEngine::Matching::Engine do
       expect(match.ledger_rows.length).to eq(2)
     end
 
-    it "will not assemble a split from legs that do not sum to the parent" do
+    it "does not assemble a split from legs that do not sum to the parent" do
       result = run(
         ledger(id: nil, amount: "300.00"),
         warehouse({ id: nil, amount: "120.00" }, { id: nil, amount: "100.00" })
@@ -174,20 +166,17 @@ RSpec.describe ReconEngine::Matching::Engine do
   end
 
   describe "determinism" do
+    let(:ledger_rows) do
+      ledger({ id: "TXN-1", amount: "10.00" }, { id: nil, amount: "20.00" },
+             { id: nil, amount: "300.00", account: "ACC-9" })
+    end
+    let(:warehouse_rows) do
+      warehouse({ id: "TXN-1", amount: "10.00" }, { id: nil, amount: "20.01" },
+                { id: nil, amount: "100.00", account: "ACC-9" }, { id: nil, amount: "200.00", account: "ACC-9" })
+    end
+
     # Matching must not depend on input order.
     it "produces the same result regardless of row order" do
-      ledger_rows = ledger(
-        { id: "TXN-1", amount: "10.00" },
-        { id: nil, amount: "20.00" },
-        { id: nil, amount: "300.00", account: "ACC-9" }
-      )
-      warehouse_rows = warehouse(
-        { id: "TXN-1", amount: "10.00" },
-        { id: nil, amount: "20.01" },
-        { id: nil, amount: "100.00", account: "ACC-9" },
-        { id: nil, amount: "200.00", account: "ACC-9" }
-      )
-
       baseline = run(ledger_rows, warehouse_rows)
 
       5.times do |i|

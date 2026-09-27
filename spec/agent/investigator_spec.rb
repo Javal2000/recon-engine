@@ -19,10 +19,7 @@ RSpec.describe ReconEngine::Agent::Investigator do
   it "returns a finding when the model classifies immediately" do
     finding, client = investigate([FakeLLM.classification(classification: "MISSING_IN_TARGET")])
 
-    expect(finding.classification).to eq("MISSING_IN_TARGET")
-    expect(finding.degraded).to be(false)
-    expect(finding.steps).to eq(1)
-    expect(finding.tool_calls).to eq(0)
+    expect(finding).to have_attributes(classification: "MISSING_IN_TARGET", degraded: false, steps: 1, tool_calls: 0)
     expect(client.calls).to eq(1)
   end
 

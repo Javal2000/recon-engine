@@ -196,7 +196,7 @@ RSpec.describe "deterministic checks" do
 
     # One pipeline change that drops three columns is one finding, not three.
     it "clusters by kind of drift rather than by column" do
-      records  = drift_between(
+      records = drift_between(
         { "amount" => "decimal", "memo" => "string", "batch" => "string", "fx" => "decimal" },
         { "amount" => "integer" }
       )

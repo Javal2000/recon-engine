@@ -14,7 +14,7 @@ module ReconEngine
       private
 
       def endpoint
-        "#{ENV.fetch('RECON_OLLAMA_URL', 'http://localhost:11434')}/api/chat"
+        "#{ENV.fetch("RECON_OLLAMA_URL", "http://localhost:11434")}/api/chat"
       end
 
       def request_body(system, transcript)

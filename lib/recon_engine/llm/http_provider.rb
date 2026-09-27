@@ -98,7 +98,8 @@ module ReconEngine
         end
       end
 
-      Retry = Class.new(StandardError)
+      class Retry < StandardError
+      end
 
       def perform(uri, body, headers)
         http = Net::HTTP.new(uri.host, uri.port)
@@ -139,11 +140,11 @@ module ReconEngine
         return nil unless response.is_a?(Net::HTTPTooManyRequests)
 
         error = parse_error(response)
-        return "quota exhausted (#{error['message']})" if error["code"] == "insufficient_quota"
+        return "quota exhausted (#{error["message"]})" if error["code"] == "insufficient_quota"
 
         violation = error.fetch("details", []).grep(Hash).flat_map { |d| Array(d["violations"]) }
                          .find { |v| v["quotaId"].to_s.include?("PerDay") }
-        violation && "daily quota used up (#{violation['quotaId']}, limit #{violation['quotaValue']})"
+        violation && "daily quota used up (#{violation["quotaId"]}, limit #{violation["quotaValue"]})"
       end
 
       # Exponential with full jitter, so separate processes hitting the same

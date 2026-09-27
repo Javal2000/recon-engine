@@ -8,23 +8,30 @@ require "digest"
 require "fileutils"
 require "json"
 require "optparse"
-require "set"
 require "time"
 require "tmpdir"
 
 module ReconEngine
   # Base class for every error this library raises deliberately.
-  Error = Class.new(StandardError)
+  class Error < StandardError
+  end
 
   # Raised when an input file does not look like what we were promised.
-  InputError      = Class.new(Error)
+  class InputError < Error
+  end
+
   # Raised when the agent layer cannot produce a schema-valid finding.
-  AgentError      = Class.new(Error)
+  class AgentError < Error
+  end
+
   # Raised when an LLM provider is misconfigured or unreachable.
-  ProviderError   = Class.new(Error)
+  class ProviderError < Error
+  end
+
   # Raised when a provider's quota won't reset within the run, so retrying is
   # pointless.
-  QuotaExhausted  = Class.new(ProviderError)
+  class QuotaExhausted < ProviderError
+  end
 end
 
 require "recon_engine/version"

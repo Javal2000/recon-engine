@@ -66,8 +66,9 @@ module ReconEngine
     # each.
     def calibration
       answered = outcomes.select(&:answered)
-      bands = CONFIDENCE_BANDS.filter_map do |low, high|
-        members = answered.select { |o| o.confidence >= low && (o.confidence < high || high == 1.0) }
+      by_band  = answered.group_by { |o| band_index(o.confidence) }
+      bands = CONFIDENCE_BANDS.each_with_index.filter_map do |(low, high), index|
+        members = by_band.fetch(index, [])
         next if members.empty?
 
         { band: "#{low}-#{high}", breaks: members.length,
@@ -134,6 +135,11 @@ module ReconEngine
         finding = report.finding_for(cluster)
         cluster.break_ids.each { |id| index[id] = finding } if finding
       end
+    end
+
+    # The last band is closed at the top, so a confidence of exactly 1.0 lands in it.
+    def band_index(confidence)
+      CONFIDENCE_BANDS.index { |_low, high| confidence < high } || (CONFIDENCE_BANDS.length - 1)
     end
 
     def ratio(part, whole) = whole.zero? ? 0.0 : (part.to_f / whole).round(3)

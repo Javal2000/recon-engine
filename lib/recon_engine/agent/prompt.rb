@@ -7,7 +7,7 @@ module ReconEngine
     # decide whether two amounts are equal. The cluster goes in as JSON inside
     # <cluster> tags, which the offline provider parses too.
     module Prompt
-      SYSTEM = <<~TEXT
+      SYSTEM = <<~TEXT.freeze
         You are a reconciliation analyst. A deterministic engine has already
         compared two systems and found breaks. It has grouped similar breaks into
         clusters. Your job is to explain ONE cluster: why it happened.
@@ -30,7 +30,7 @@ module ReconEngine
 
         To finish:
         {"action":"classify",
-         "classification":"<one of: #{Schema::CLASSIFICATIONS.join(' | ')}>",
+         "classification":"<one of: #{Schema::CLASSIFICATIONS.join(" | ")}>",
          "confidence":<number between 0 and 1>,
          "evidence":["<specific fact from a tool result>", "..."],
          "explanation":"<two or three sentences: what happened and why>",

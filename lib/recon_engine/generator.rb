@@ -16,15 +16,28 @@ module ReconEngine
 
     # Big enough that clustering visibly matters, small enough to check by hand.
     DEFAULT_FAULTS = {
-      missing: 14,   # dropped between systems           -> MISSING_IN_TARGET
-      duplicated: 9,    # replayed by an at-least-once load  -> DUPLICATE_IN_TARGET
-      timing: 26,   # T+1 settlement                     -> TIMING_DIFFERENCE
-      rounding: 18,   # one cent lost to precision         -> ROUNDING
-      material: 7,    # a genuinely different number       -> GENUINE_DISCREPANCY
-      status: 6,    # status changed in transit          -> GENUINE_DISCREPANCY
-      orphan: 5,    # invented downstream                -> GENUINE_DISCREPANCY
-      split: 4,    # one deposit arrives as N legs      -> matches, no break
-      composite_only: 120  # txn_id absent downstream           -> matches via composite
+      missing: 14,        # dropped between systems
+      duplicated: 9,      # replayed by an at-least-once load
+      timing: 26,         # T+1 settlement
+      rounding: 18,       # one cent lost to precision
+      material: 7,        # a different number altogether
+      status: 6,          # status changed in transit
+      orphan: 5,          # invented downstream
+      split: 4,           # one deposit arrives as three legs
+      composite_only: 120 # txn_id absent downstream
+    }.freeze
+
+    # How a correct analyst would classify each fault. Split and composite-only
+    # rows should reconcile silently, so they carry a note instead.
+    EXPECTED = {
+      missing: "MISSING_IN_TARGET", duplicated: "DUPLICATE_IN_TARGET", timing: "TIMING_DIFFERENCE",
+      rounding: "ROUNDING", material: "GENUINE_DISCREPANCY", status: "GENUINE_DISCREPANCY",
+      orphan: "GENUINE_DISCREPANCY"
+    }.freeze
+
+    NOTES = {
+      split: "should match via N-to-one, not produce a break",
+      composite_only: "should match via composite key, not produce a break"
     }.freeze
 
     def initialize(seed: 42, rows: 2000, accounts: 10, days: 10,
@@ -104,54 +117,20 @@ module ReconEngine
     end
 
     def derive_warehouse(ledger, assignments)
-      fault_of = {}
-      assignments.each { |kind, indexes| indexes.each { |i| fault_of[i] = kind } }
-
-      injected = []
+      fault_of  = assignments.flat_map { |kind, indexes| indexes.map { |index| [index, kind] } }.to_h
+      injected  = []
       warehouse = []
 
       ledger.each_with_index do |row, index|
-        case fault_of[index]
-        when :missing
-          injected << fault(:missing, row, "MISSING_IN_TARGET")
-        when :duplicated
-          warehouse << row.dup
-          warehouse << row.dup
-          injected << fault(:duplicated, row, "DUPLICATE_IN_TARGET")
-        when :timing
-          shifted = row.merge("posted_date" => (Date.iso8601(row["posted_date"]) + 1).iso8601)
-          warehouse << shifted
-          injected << fault(:timing, row, "TIMING_DIFFERENCE")
-        when :rounding
-          cents = Money.to_cents(row["amount"])
-          warehouse << row.merge("amount" => Money.format(cents + (cents.negative? ? -1 : 1)))
-          injected << fault(:rounding, row, "ROUNDING")
-        when :material
-          cents = Money.to_cents(row["amount"])
-          warehouse << row.merge("amount" => Money.format(cents + 5_000))
-          injected << fault(:material, row, "GENUINE_DISCREPANCY")
-        when :status
-          other = (STATUSES - [row["status"]]).first
-          warehouse << row.merge("status" => other)
-          injected << fault(:status, row, "GENUINE_DISCREPANCY")
-        when :split
-          legs = split_amount(Money.to_cents(row["amount"]), 3)
-          legs.each do |leg_cents|
-            warehouse << row.merge("txn_id" => "", "amount" => Money.format(leg_cents))
-          end
-          injected << fault(:split, row, nil, note: "should match via N-to-one, not produce a break")
-        when :composite_only
-          warehouse << row.merge("txn_id" => "")
-          injected << fault(:composite_only, row, nil, note: "should match via composite key, not produce a break")
-        else
-          warehouse << row.dup
-        end
+        kind = fault_of[index]
+        warehouse.concat(kind ? downstream_rows(kind, row) : [row.dup])
+        injected << fault(kind, row) if kind
       end
 
       @faults[:orphan].times do |i|
         row = orphan_row(i)
         warehouse << row
-        injected << fault(:orphan, row, "GENUINE_DISCREPANCY")
+        injected << fault(:orphan, row)
       end
 
       [warehouse, injected]
@@ -192,15 +171,39 @@ module ReconEngine
       legs
     end
 
-    def fault(kind, row, expected_classification, note: nil)
+    # What the warehouse receives for a ledger row carrying this fault.
+    def downstream_rows(kind, row)
+      case kind
+      when :missing        then []
+      when :duplicated     then [row.dup, row.dup]
+      when :timing         then [row.merge("posted_date" => (Date.iso8601(row["posted_date"]) + 1).iso8601)]
+      when :rounding       then [with_cents(row) { |cents| cents + (cents.negative? ? -1 : 1) }]
+      when :material       then [with_cents(row) { |cents| cents + 5_000 }]
+      when :status         then [row.merge("status" => (STATUSES - [row["status"]]).first)]
+      when :split          then split_legs(row)
+      when :composite_only then [row.merge("txn_id" => "")]
+      end
+    end
+
+    def with_cents(row)
+      row.merge("amount" => Money.format(yield(Money.to_cents(row["amount"]))))
+    end
+
+    def split_legs(row)
+      split_amount(Money.to_cents(row["amount"]), 3).map do |leg_cents|
+        row.merge("txn_id" => "", "amount" => Money.format(leg_cents))
+      end
+    end
+
+    def fault(kind, row)
       {
         "kind" => kind.to_s,
         "txn_id" => row["txn_id"],
         "account_id" => row["account_id"],
         "posted_date" => row["posted_date"],
         "amount" => row["amount"],
-        "expected_classification" => expected_classification,
-        "note" => note
+        "expected_classification" => EXPECTED[kind],
+        "note" => NOTES[kind]
       }.compact
     end
 
@@ -216,8 +219,8 @@ module ReconEngine
         },
         "fault_counts" => injected.map { |f| f["kind"] }.tally.sort.to_h,
         "expected_classifications" => injected
-          .filter_map { |f| f["expected_classification"] }
-          .tally.sort.to_h,
+                                      .filter_map { |f| f["expected_classification"] }
+                                      .tally.sort.to_h,
         "faults" => injected.sort_by { |f| [f["kind"], f["txn_id"]] }
       }
     end

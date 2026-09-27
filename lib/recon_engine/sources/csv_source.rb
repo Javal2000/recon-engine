@@ -65,9 +65,7 @@ module ReconEngine
         return if @validated
 
         missing = REQUIRED_HEADERS - headers
-        unless missing.empty?
-          raise InputError, "#{@path} is missing required column(s): #{missing.join(', ')}"
-        end
+        raise InputError, "#{@path} is missing required column(s): #{missing.join(", ")}" unless missing.empty?
 
         @validated = true
       end

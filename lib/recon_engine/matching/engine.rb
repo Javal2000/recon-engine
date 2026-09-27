@@ -144,18 +144,16 @@ module ReconEngine
       # and at most 5 legs the search visits at most 1,585 subsets per unmatched
       # row, and the failure mode is "no split found" rather than a hung run.
       def split_candidates(one, available, consumed)
-        window = @config.timing_window_days
-        available
-          .reject { |row| consumed.include?(row.ref) }
-          .select do |row|
+        window     = @config.timing_window_days
+        candidates = available.select do |row|
+          !consumed.include?(row.ref) &&
             row.account_id == one.account_id &&
-              row.currency == one.currency &&
-              (row.posted_date - one.posted_date).abs <= window &&
-              same_sign?(row.amount_cents, one.amount_cents) &&
-              row.amount_cents.abs <= one.amount_cents.abs + @config.tolerance_cents
-          end
-          .sort_by { |row| [-row.amount_cents.abs, row.sort_key] }
-          .first(@config.max_split_candidates)
+            row.currency == one.currency &&
+            (row.posted_date - one.posted_date).abs <= window &&
+            same_sign?(row.amount_cents, one.amount_cents) &&
+            row.amount_cents.abs <= one.amount_cents.abs + @config.tolerance_cents
+        end
+        candidates.sort_by { |row| [-row.amount_cents.abs, row.sort_key] }.first(@config.max_split_candidates)
       end
 
       # Depth-first subset search with a magnitude prune. Returns the first

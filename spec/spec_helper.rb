@@ -1,5 +1,18 @@
 # frozen_string_literal: true
 
+# Coverage is measured when COVERAGE is set, which CI does for the main spec
+# run. The golden-set run exercises a narrower slice and isn't held to it.
+if ENV["COVERAGE"]
+  require "simplecov"
+  SimpleCov.start do
+    add_filter "/spec/"
+    enable_coverage :branch
+    # A little under the measured 95.6% / 79.8%, so it catches a regression
+    # without failing on the small differences between Ruby versions.
+    minimum_coverage line: 94, branch: 77
+  end
+end
+
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
 require "recon_engine"

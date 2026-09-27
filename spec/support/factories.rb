@@ -29,7 +29,7 @@ module Factories
 
   def build_rows(source, rows)
     rows.each_with_index.map do |attrs, i|
-      txn(**{ source: source, row: i + 1 }.merge(attrs))
+      txn(source: source, row: i + 1, **attrs)
     end
   end
 

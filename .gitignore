@@ -6,3 +6,4 @@
 *.gem
 .env
 .DS_Store
+/coverage/

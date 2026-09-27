@@ -55,7 +55,7 @@ module ReconEngine
         return text unless text.nil?
 
         blocked = payload.dig("promptFeedback", "blockReason")
-        raise ProviderError, "gemini returned no text#{blocked ? " (blocked: #{blocked})" : ''}"
+        raise ProviderError, "gemini returned no text#{" (blocked: #{blocked})" if blocked}"
       end
     end
   end

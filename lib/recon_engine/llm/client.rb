@@ -16,9 +16,9 @@ module ReconEngine
       }.freeze
 
       def self.build(config)
-        provider  = config.agent_provider.to_sym
+        provider = config.agent_provider.to_sym
         const_name = REGISTRY.fetch(provider) do
-          raise ProviderError, "unknown provider #{provider.inspect}; expected one of #{REGISTRY.keys.join(', ')}"
+          raise ProviderError, "unknown provider #{provider.inspect}; expected one of #{REGISTRY.keys.join(", ")}"
         end
         Object.const_get(const_name).new(model: config.agent_model)
       end

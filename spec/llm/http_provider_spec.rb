@@ -13,11 +13,11 @@ RSpec.describe ReconEngine::LLM::HttpProvider do
 
       private
 
-      def endpoint                  = "https://example.test/v1/generate"
-      def request_body(_sys, _tr)   = { prompt: "x" }
-      def extract_text(payload)     = payload.fetch("text")
-      def usage_from(payload)       = ReconEngine::LLM::Usage.zero.with(input_tokens: payload.fetch("in", 0))
-      def perform(_uri, _body, _hd) = @responses.shift
+      def endpoint                            = "https://example.test/v1/generate"
+      def request_body(_system, _transcript)  = { prompt: "x" }
+      def extract_text(payload)               = payload.fetch("text")
+      def usage_from(payload)                 = ReconEngine::LLM::Usage.zero.with(input_tokens: payload.fetch("in", 0))
+      def perform(_uri, _body, _headers)      = @responses.shift
 
       def pause(seconds)
         (@pauses ||= []) << seconds
@@ -39,7 +39,12 @@ RSpec.describe ReconEngine::LLM::HttpProvider do
   def ok(text: "done", tokens: 7) = response(Net::HTTPOK, 200, JSON.generate("text" => text, "in" => tokens))
 
   def rate_limited(retry_delay: nil, headers: {})
-    details = retry_delay ? [{ "@type" => "type.googleapis.com/google.rpc.RetryInfo", "retryDelay" => retry_delay }] : []
+    details = if retry_delay
+                [{ "@type" => "type.googleapis.com/google.rpc.RetryInfo",
+                   "retryDelay" => retry_delay }]
+              else
+                []
+              end
     body = JSON.generate("error" => { "code" => 429, "message" => "Quota exceeded.", "details" => details })
     response(Net::HTTPTooManyRequests, 429, body, headers)
   end
@@ -119,7 +124,9 @@ RSpec.describe ReconEngine::LLM::HttpProvider do
     end
 
     it "opens after consecutive failures and stays open" do
-      provider.responses = Array.new(described_class::MAX_ATTEMPTS * described_class::BREAKER_THRESHOLD) { server_error }
+      provider.responses = Array.new(described_class::MAX_ATTEMPTS * described_class::BREAKER_THRESHOLD) do
+        server_error
+      end
       described_class::BREAKER_THRESHOLD.times { expect { complete }.to raise_error(ReconEngine::ProviderError, /HTTP 503/) }
 
       expect { complete }.to raise_error(ReconEngine::ProviderError, /not called, 3 calls in a row failed/)

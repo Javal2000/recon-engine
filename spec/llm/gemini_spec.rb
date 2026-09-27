@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe ReconEngine::LLM::Gemini do
+  subject(:client) { described_class.new(model: "gemini-test") }
+
   around do |example|
     previous = ENV.fetch("GEMINI_API_KEY", nil)
     ENV["GEMINI_API_KEY"] = "test-key-123"
@@ -8,8 +10,6 @@ RSpec.describe ReconEngine::LLM::Gemini do
   ensure
     ENV["GEMINI_API_KEY"] = previous
   end
-
-  subject(:client) { described_class.new(model: "gemini-test") }
 
   it "sends the key in a header, never in the URL" do
     expect(client.send(:endpoint)).not_to include("test-key-123")

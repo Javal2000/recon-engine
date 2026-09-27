@@ -77,28 +77,21 @@ module ReconEngine
       return [] unless @config.agent?
       return [] if clusters.empty?
 
-      targets = investigation_targets(clusters)
-
-      client = begin
-        LLM::Client.build(@config)
-      rescue ProviderError => e
-        # A provider we cannot construct is a configuration problem, not a data
-        # problem. Say so on every cluster and let the deterministic report stand.
-        return targets.map do |cluster|
-          Agent::Finding.degraded_for(
-            cluster.id,
-            provider: @config.agent_provider.to_s,
-            model: @config.agent_model,
-            model_backed: false,
-            reason: e.message
-          )
-        end
-      end
-
+      targets      = investigation_targets(clusters)
+      client       = LLM::Client.build(@config)
       tools        = Agent::Tools.new(context: context, breaks: breaks)
       investigator = Agent::Investigator.new(client: client, tools: tools, config: @config)
 
       targets.map { |cluster| investigator.investigate(cluster) }
+    rescue ProviderError => e
+      # Only building the client can land here; the investigator contains its
+      # own provider failures. A provider we cannot construct is a configuration
+      # problem, not a data problem: say so on every cluster and let the
+      # deterministic report stand.
+      targets.map do |cluster|
+        Agent::Finding.degraded_for(cluster.id, provider: @config.agent_provider.to_s, model: @config.agent_model,
+                                                model_backed: false, reason: e.message)
+      end
     end
 
     # Ranking the budget purely by dollar magnitude would miss the case this

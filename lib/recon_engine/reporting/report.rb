@@ -46,16 +46,12 @@ module ReconEngine
       end
 
       def classification_summary
-        clusters.group_by { |c| finding_for(c)&.classification || "NOT_INVESTIGATED" }
-                .transform_values do |group|
-                  {
-                    clusters: group.length,
-                    breaks: group.sum(&:count),
-                    magnitude_cents: group.sum { |c| c.magnitude_cents.abs }
-                  }
-                end
-                .sort_by { |_k, v| -v[:magnitude_cents] }
-                .to_h
+        grouped = clusters.group_by { |c| finding_for(c)&.classification || "NOT_INVESTIGATED" }
+        summary = grouped.transform_values do |group|
+          { clusters: group.length, breaks: group.sum(&:count),
+            magnitude_cents: group.sum { |c| c.magnitude_cents.abs } }
+        end
+        summary.sort_by { |_classification, row| -row[:magnitude_cents] }.to_h
       end
 
       def clean?

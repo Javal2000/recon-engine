@@ -1,13 +1,22 @@
 # frozen_string_literal: true
 
 RSpec.describe ReconEngine::Run do
-  around do |example|
-    Dir.mktmpdir { |dir| @dir = dir and example.run }
-  end
-
-  let(:manifest) { ReconEngine::Generator.new(seed: 42, rows: 400).write(@dir) }
+  let(:dir) { Dir.mktmpdir }
+  let(:manifest) { ReconEngine::Generator.new(seed: 42, rows: 400).write(dir) }
   let(:ledger_path)    { manifest["paths"]["ledger"] }
   let(:warehouse_path) { manifest["paths"]["warehouse"] }
+
+  after { FileUtils.remove_entry(dir) }
+
+  def investigator_for(report, client)
+    context = ReconEngine::Checks::Context.new(
+      config: report.config, match_result: report.match_result,
+      ledger_profile: report.ledger_profile, warehouse_profile: report.warehouse_profile,
+      ledger_rows: [], warehouse_rows: []
+    )
+    tools = ReconEngine::Agent::Tools.new(context: context, breaks: report.breaks)
+    ReconEngine::Agent::Investigator.new(client: client, tools: tools, config: report.config)
+  end
 
   def reconcile(**overrides)
     described_class.call(
@@ -20,15 +29,21 @@ RSpec.describe ReconEngine::Run do
   describe "idempotency" do
     # Same bytes in, same fingerprint out.
     it "produces an identical fingerprint on a rerun" do
-      expect(reconcile.deterministic_fingerprint).to eq(reconcile.deterministic_fingerprint)
+      first, second = Array.new(2) { reconcile }
+
+      expect(second.deterministic_fingerprint).to eq(first.deterministic_fingerprint)
     end
 
     it "produces identical break ids on a rerun" do
-      expect(reconcile.breaks.map(&:id)).to eq(reconcile.breaks.map(&:id))
+      first, second = Array.new(2) { reconcile }
+
+      expect(second.breaks.map(&:id)).to eq(first.breaks.map(&:id))
     end
 
     it "produces identical cluster ordering on a rerun" do
-      expect(reconcile.clusters.map(&:id)).to eq(reconcile.clusters.map(&:id))
+      first, second = Array.new(2) { reconcile }
+
+      expect(second.clusters.map(&:id)).to eq(first.clusters.map(&:id))
     end
 
     # Turning the agent on must not change a single deterministic conclusion.
@@ -101,22 +116,12 @@ RSpec.describe ReconEngine::Run do
     it "still reports every break when a provider errors mid-run" do
       exploding = Class.new(ReconEngine::LLM::Client) do
         def name = "exploding"
-        def complete(system:, transcript:) = raise(ReconEngine::ProviderError, "boom")
+        def complete(**) = raise(ReconEngine::ProviderError, "boom")
       end
 
-      report = reconcile(agent_enabled: false)
-      context = ReconEngine::Checks::Context.new(
-        config: report.config, match_result: report.match_result,
-        ledger_profile: report.ledger_profile, warehouse_profile: report.warehouse_profile,
-        ledger_rows: [], warehouse_rows: []
-      )
-      investigator = ReconEngine::Agent::Investigator.new(
-        client: exploding.new,
-        tools: ReconEngine::Agent::Tools.new(context: context, breaks: report.breaks),
-        config: report.config
-      )
+      report  = reconcile(agent_enabled: false)
+      finding = investigator_for(report, exploding.new).investigate(report.clusters.first)
 
-      finding = investigator.investigate(report.clusters.first)
       expect(finding.degraded).to be(true)
       expect(finding.error).to include("boom")
     end
@@ -152,7 +157,7 @@ RSpec.describe ReconEngine::Run do
       first  = JSON.parse(ReconEngine::Reporting::JsonReport.generate(reconcile))
       second = JSON.parse(ReconEngine::Reporting::JsonReport.generate(reconcile))
 
-      expect(first.reject { |k, _| k == "run" }).to eq(second.reject { |k, _| k == "run" })
+      expect(first.except("run")).to eq(second.except("run"))
     end
   end
 end

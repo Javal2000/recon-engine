@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 RSpec.describe ReconEngine::Sources::CsvSource do
-  around do |example|
-    Dir.mktmpdir { |dir| @dir = dir and example.run }
-  end
+  let(:dir) { Dir.mktmpdir }
+
+  after { FileUtils.remove_entry(dir) }
 
   def source_for(rows, name: :ledger)
-    path = write_csv(File.join(@dir, "#{name}.csv"), rows)
+    path = write_csv(File.join(dir, "#{name}.csv"), rows)
     described_class.new(path, name: name)
   end
 
@@ -20,13 +20,10 @@ RSpec.describe ReconEngine::Sources::CsvSource do
   it "parses rows into normalized transactions" do
     txn = source_for([row]).first
 
-    expect(txn.txn_id).to eq("TXN-1")
-    expect(txn.amount_cents).to eq(10_000)
-    expect(txn.posted_date).to eq(Date.new(2026, 1, 5))
-    expect(txn.currency).to eq("USD")
-    expect(txn.status).to eq("POSTED")
-    expect(txn.row_number).to eq(1)
-    expect(txn.source).to eq(:ledger)
+    expect(txn).to have_attributes(
+      txn_id: "TXN-1", amount_cents: 10_000, posted_date: Date.new(2026, 1, 5),
+      currency: "USD", status: "POSTED", row_number: 1, source: :ledger
+    )
   end
 
   it "treats a blank transaction id as absent, not as an id" do
@@ -54,7 +51,7 @@ RSpec.describe ReconEngine::Sources::CsvSource do
 
   describe "input validation" do
     it "names the missing column" do
-      path = File.join(@dir, "bad.csv")
+      path = File.join(dir, "bad.csv")
       CSV.open(path, "w") { |csv| csv << %w[txn_id account_id] << %w[TXN-1 ACC-1] }
 
       expect { described_class.new(path, name: :ledger).to_a }
@@ -72,7 +69,7 @@ RSpec.describe ReconEngine::Sources::CsvSource do
     end
 
     it "refuses a file that does not exist" do
-      expect { described_class.new(File.join(@dir, "nope.csv"), name: :ledger) }
+      expect { described_class.new(File.join(dir, "nope.csv"), name: :ledger) }
         .to raise_error(ReconEngine::InputError, /does not exist/)
     end
   end

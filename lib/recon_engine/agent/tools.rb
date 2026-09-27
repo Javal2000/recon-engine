@@ -25,8 +25,9 @@ module ReconEngine
         },
         {
           name: "check_adjacent_periods",
-          description: "Count rows in both sources on the days either side of a date, for one account/currency/amount. " \
-                       "This is the primary test for whether a break is a settlement timing lag.",
+          description: "Count rows in both sources on the days either side of a date, for one " \
+                       "account/currency/amount. This is the primary test for whether a break is " \
+                       "a settlement timing lag.",
           arguments: {
             account_id: "required",
             date: "required, ISO-8601",
@@ -36,7 +37,8 @@ module ReconEngine
         },
         {
           name: "get_schema",
-          description: "Return the column names and inferred types of one source. Use it when a break looks structural.",
+          description: "Return the column names and inferred types of one source. " \
+                       "Use it when a break looks structural.",
           arguments: { source: "\"ledger\" or \"warehouse\" (required)" }
         },
         {
@@ -66,16 +68,16 @@ module ReconEngine
         when "check_adjacent_periods" then check_adjacent_periods(args)
         when "get_schema"             then get_schema(args)
         when "summarize_cluster"      then summarize_cluster(args)
-        else { "error" => "unknown tool #{name.inspect}; available tools are #{NAMES.join(', ')}" }
+        else { "error" => "unknown tool #{name.inspect}; available tools are #{NAMES.join(", ")}" }
         end
-      rescue Date::Error, ArgumentError, TypeError => e
+      rescue ArgumentError, TypeError => e
         { "error" => "#{name} failed: #{e.message}" }
       end
 
       def descriptor
         SPECS.map do |spec|
           "- #{spec[:name]}: #{spec[:description]}\n    arguments: " \
-            "#{spec[:arguments].map { |k, v| "#{k}: #{v}" }.join('; ')}"
+            "#{spec[:arguments].map { |k, v| "#{k}: #{v}" }.join("; ")}"
         end.join("\n")
       end
 
@@ -156,7 +158,7 @@ module ReconEngine
 
         found   = ids.filter_map { |id| @breaks[id] }
         missing = ids - found.map(&:id)
-        return { "error" => "no such break ids: #{missing.join(', ')}" } if found.empty?
+        return { "error" => "no such break ids: #{missing.join(", ")}" } if found.empty?
 
         {
           "requested" => ids.length,

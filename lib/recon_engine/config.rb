@@ -30,9 +30,9 @@ module ReconEngine
 
     def self.build(**overrides)
       unknown = overrides.keys - DEFAULTS.keys
-      raise ArgumentError, "unknown config keys: #{unknown.join(', ')}" unless unknown.empty?
+      raise ArgumentError, "unknown config keys: #{unknown.join(", ")}" unless unknown.empty?
 
-      new(**DEFAULTS.merge(overrides))
+      new(**DEFAULTS, **overrides)
     end
 
     # Deterministic settings only. Switching the agent on, off, or to another

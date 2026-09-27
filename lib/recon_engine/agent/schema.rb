@@ -34,7 +34,7 @@ module ReconEngine
         errors = case step["action"]
                  when "use_tool" then validate_tool_call(step, tool_names)
                  when "classify" then validate_classification(step)
-                 else ["\"action\" must be one of #{ACTIONS.join(', ')}"]
+                 else ["\"action\" must be one of #{ACTIONS.join(", ")}"]
                  end
 
         [errors.empty? ? step : nil, errors]
@@ -62,7 +62,9 @@ module ReconEngine
       def validate_tool_call(step, tool_names)
         errors = []
         tool = step["tool"]
-        errors << "\"tool\" must be one of #{tool_names.join(', ')}, got #{tool.inspect}" unless tool_names.include?(tool)
+        unless tool_names.include?(tool)
+          errors << "\"tool\" must be one of #{tool_names.join(", ")}, got #{tool.inspect}"
+        end
         errors << "\"arguments\" must be a JSON object" unless step["arguments"].is_a?(Hash)
         errors
       end
@@ -71,7 +73,8 @@ module ReconEngine
         errors = []
 
         unless CLASSIFICATIONS.include?(step["classification"])
-          errors << "\"classification\" must be one of #{CLASSIFICATIONS.join(', ')}, got #{step['classification'].inspect}"
+          errors << "\"classification\" must be one of #{CLASSIFICATIONS.join(", ")}, " \
+                    "got #{step["classification"].inspect}"
         end
 
         confidence = step["confidence"]

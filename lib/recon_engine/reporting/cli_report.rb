@@ -19,6 +19,14 @@ module ReconEngine
         ascii: { sep: "|", ellipsis: "...", arrow: "->", dash: "--" }
       }.freeze
 
+      # Agent explanations are free text written by a model, and models emit
+      # em-dashes and curly quotes freely. Transliterating at the very end
+      # catches whatever the provider decided to send.
+      TRANSLITERATIONS = {
+        "—" => "--", "–" => "-", "·" => "|", "…" => "...", "→" => "->",
+        "“" => '"', "”" => '"', "‘" => "'", "’" => "'", "•" => "*", " " => " "
+      }.freeze
+
       def self.unicode_terminal?
         encoding = $stdout.external_encoding || Encoding.default_external
         encoding.to_s.match?(/UTF-8/i)
@@ -58,32 +66,35 @@ module ReconEngine
         [
           rule("="),
           center("RECONCILIATION REPORT"),
-          center("recon-engine v#{ReconEngine::VERSION}  #{sep}  #{report.started_at.strftime('%Y-%m-%d %H:%M:%S %Z')}"),
+          center("recon-engine v#{ReconEngine::VERSION}  #{sep}  #{report.started_at.strftime("%F %T %Z")}"),
           rule("=")
         ].join("\n")
       end
 
       def sources_section
         lines = ["INPUTS"]
-        report.inputs.each do |input|
-          lines << "  #{input[:role].to_s.ljust(10)} #{input[:path]}"
-          lines << "  #{' '.ljust(10)} #{input[:rows]} rows #{sep} #{input[:digest][0, 12]}#{ellipsis}"
-        end
+        report.inputs.each { |input| lines.concat(input_lines(input)) }
         lines << ""
-        lines << "  ledger    #{report.ledger_profile.row_count} rows, " \
-                 "#{Money.humanize(report.ledger_profile.total_cents)}, " \
-                 "#{report.ledger_profile.accounts.size} accounts"
-        lines << "  warehouse #{report.warehouse_profile.row_count} rows, " \
-                 "#{Money.humanize(report.warehouse_profile.total_cents)}, " \
-                 "#{report.warehouse_profile.accounts.size} accounts"
+        lines << profile_line("ledger   ", report.ledger_profile)
+        lines << profile_line("warehouse", report.warehouse_profile)
         lines.join("\n")
+      end
+
+      def input_lines(input)
+        ["  #{input[:role].to_s.ljust(10)} #{input[:path]}",
+         "  #{" ".ljust(10)} #{input[:rows]} rows #{sep} #{input[:digest][0, 12]}#{ellipsis}"]
+      end
+
+      def profile_line(label, profile)
+        "  #{label} #{profile.row_count} rows, #{Money.humanize(profile.total_cents)}, " \
+          "#{profile.accounts.size} accounts"
       end
 
       def matching_section
         result = report.match_result
         lines = ["", "MATCHING"]
         lines << "  matched sets      #{result.matches.length} " \
-                 "(#{format('%.2f', result.match_rate * 100)}% of ledger rows)"
+                 "(#{format("%.2f", result.match_rate * 100)}% of ledger rows)"
         result.strategy_counts.each do |strategy, count|
           lines << "    #{strategy.to_s.ljust(16)}#{count}"
         end
@@ -100,25 +111,26 @@ module ReconEngine
           return lines.join("\n")
         end
 
-        lines << "  #{colorize(report.break_count.to_s, :red)} breaks in " \
-                 "#{report.clusters.length} clusters"
+        lines << "  #{colorize(report.break_count.to_s, :red)} breaks in #{report.clusters.length} clusters"
         lines << "  row-level impact  #{colorize(Money.humanize(report.row_level_impact_cents), :yellow)}"
         lines << ""
-        report.breaks_by_type.each do |type, count|
-          label = Breaks::BreakRecord::TYPES.fetch(type.to_sym)[:label]
-          lines << "    #{count.to_s.rjust(6)}  #{label}"
-        end
-
-        if report.agent_ran?
-          lines << ""
-          lines << "  BY CLASSIFICATION"
-          report.classification_summary.each do |classification, stats|
-            lines << "    #{classification.ljust(22)}#{stats[:clusters].to_s.rjust(3)} clusters #{sep} " \
-                     "#{stats[:breaks].to_s.rjust(6)} breaks #{sep} #{Money.humanize(stats[:magnitude_cents])}"
-          end
-        end
-
+        lines.concat(break_type_lines)
+        lines.concat(classification_lines) if report.agent_ran?
         lines.join("\n")
+      end
+
+      def break_type_lines
+        report.breaks_by_type.map do |type, count|
+          "    #{count.to_s.rjust(6)}  #{Breaks::BreakRecord::TYPES.fetch(type.to_sym)[:label]}"
+        end
+      end
+
+      def classification_lines
+        rows = report.classification_summary.map do |classification, stats|
+          "    #{classification.ljust(22)}#{stats[:clusters].to_s.rjust(3)} clusters #{sep} " \
+            "#{stats[:breaks].to_s.rjust(6)} breaks #{sep} #{Money.humanize(stats[:magnitude_cents])}"
+        end
+        ["", "  BY CLASSIFICATION", *rows]
       end
 
       def clusters_section
@@ -133,28 +145,28 @@ module ReconEngine
 
       def cluster_block(cluster, position)
         finding = report.finding_for(cluster)
-        lines = []
-        lines << ""
-        lines << "#{position}. #{cluster.label} #{dash} #{cluster.count} break(s), " \
-                 "#{Money.humanize(cluster.magnitude_cents)}"
-        lines << colorize("   #{cluster.id} #{sep} #{signature_text(cluster)}", :grey)
-
+        lines   = ["",
+                   "#{position}. #{cluster.label} #{dash} #{cluster.count} break(s), " \
+                   "#{Money.humanize(cluster.magnitude_cents)}",
+                   colorize("   #{cluster.id} #{sep} #{signature_text(cluster)}", :grey)]
         if finding.nil?
-          lines << colorize("   not investigated (agent disabled or cluster budget reached)", :grey)
-          return lines
+          return lines << colorize("   not investigated (agent disabled or cluster budget reached)", :grey)
         end
 
-        lines << "   #{colorize(finding.classification, classification_color(finding))} " \
-                 "#{colorize("(confidence #{finding.confidence})", :grey)}"
-        lines << wrap(finding.explanation, "   ")
-        finding.evidence.first(3).each { |item| lines << wrap("- #{item}", "     ") }
-        lines << wrap("#{arrow} #{finding.suggested_action}", "   ")
-        lines << colorize("   #{provenance_text(finding)}", :grey)
-        lines
+        lines + finding_lines(finding)
+      end
+
+      def finding_lines(finding)
+        ["   #{colorize(finding.classification, classification_color(finding))} " \
+         "#{colorize("(confidence #{finding.confidence})", :grey)}",
+         wrap(finding.explanation, "   "),
+         *finding.evidence.first(3).map { |item| wrap("- #{item}", "     ") },
+         wrap("#{arrow} #{finding.suggested_action}", "   "),
+         colorize("   #{provenance_text(finding)}", :grey)]
       end
 
       def signature_text(cluster)
-        cluster.signature.map { |k, v| "#{k}=#{Array(v).join('+')}" }.join(" ")
+        cluster.signature.map { |k, v| "#{k}=#{Array(v).join("+")}" }.join(" ")
       end
 
       def provenance_text(finding)
@@ -182,7 +194,7 @@ module ReconEngine
           "",
           rule("="),
           "  fingerprint  #{report.deterministic_fingerprint[0, 32]}#{ellipsis}",
-          "  duration     #{format('%.3f', report.duration_seconds)}s",
+          "  duration     #{format("%.3f", report.duration_seconds)}s",
           agent_footer,
           rule("=")
         ].compact.join("\n")
@@ -230,14 +242,6 @@ module ReconEngine
         end
         lines.map { |line| indent + line.join(" ") }.join("\n")
       end
-
-      # Agent explanations are free text written by a model, and models emit
-      # em-dashes and curly quotes freely. Transliterating at the very end
-      # catches whatever the provider decided to send.
-      TRANSLITERATIONS = {
-        "—" => "--", "–" => "-", "·" => "|", "…" => "...", "→" => "->",
-        "“" => '"', "”" => '"', "‘" => "'", "’" => "'", "•" => "*", " " => " "
-      }.freeze
 
       def asciify(text)
         swapped = text.gsub(Regexp.union(TRANSLITERATIONS.keys), TRANSLITERATIONS)

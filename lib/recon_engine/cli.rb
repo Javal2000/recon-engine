@@ -41,7 +41,7 @@ module ReconEngine
         EXIT_CLEAN
       when "help", "--help", "-h", nil then help
       else
-        @stderr.puts("unknown command #{command.inspect}. Try: #{COMMANDS.join(', ')}")
+        @stderr.puts("unknown command #{command.inspect}. Try: #{COMMANDS.join(", ")}")
         EXIT_ERROR
       end
     end
@@ -59,9 +59,9 @@ module ReconEngine
       dir = options.fetch(:dir, "data")
 
       manifest = Generator.new(seed: options.fetch(:seed, 42), rows: options.fetch(:rows, 2000)).write(dir)
-      @stdout.puts("generated #{manifest['generator']['ledger_rows']} ledger rows and " \
-                   "#{manifest['generator']['warehouse_rows']} warehouse rows in #{dir}/")
-      @stdout.puts("injected faults: #{manifest['fault_counts'].map { |k, v| "#{k}=#{v}" }.join(', ')}")
+      @stdout.puts("generated #{manifest["generator"]["ledger_rows"]} ledger rows and " \
+                   "#{manifest["generator"]["warehouse_rows"]} warehouse rows in #{dir}/")
+      @stdout.puts("injected faults: #{manifest["fault_counts"].map { |k, v| "#{k}=#{v}" }.join(", ")}")
       @stdout.puts
 
       report = Run.call(
@@ -124,15 +124,18 @@ module ReconEngine
 
       print_evaluation(evaluation)
       write_file(options[:json], JSON.pretty_generate(evaluation.to_h)) if options[:json]
-      write_file(options[:markdown], "#{evaluation.to_markdown}
-") if options[:markdown]
+      if options[:markdown]
+        write_file(options[:markdown], "#{evaluation.to_markdown}
+")
+      end
       EXIT_CLEAN
     end
 
     def print_evaluation(evaluation)
       summary = evaluation.to_h
       usage   = summary[:usage]
-      @stdout.puts("provider #{summary[:provider]} #{summary[:models].join(', ')}, "                    "#{summary[:clusters_investigated]}/#{summary[:clusters]} clusters investigated")
+      @stdout.puts("provider #{summary[:provider]} #{summary[:models].join(", ")}, " \
+                   "#{summary[:clusters_investigated]}/#{summary[:clusters]} clusters investigated")
       @stdout.puts
       @stdout.puts(evaluation.to_markdown)
       @stdout.puts
@@ -142,7 +145,9 @@ module ReconEngine
       end
       return unless usage[:calls].positive?
 
-      @stdout.puts("#{usage[:calls]} model calls, #{usage[:total_tokens]} tokens "                    "(#{usage[:thinking_tokens]} thinking), #{(usage[:latency_ms] / 1000.0).round(1)}s in the model")
+      seconds = (usage[:latency_ms] / 1000.0).round(1)
+      @stdout.puts("#{usage[:calls]} model calls, #{usage[:total_tokens]} tokens " \
+                   "(#{usage[:thinking_tokens]} thinking), #{seconds}s in the model")
     end
 
     def write_file(path, content)

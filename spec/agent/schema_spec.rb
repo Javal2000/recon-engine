@@ -87,7 +87,7 @@ RSpec.describe ReconEngine::Agent::Schema do
 
   describe "tolerating what models actually emit" do
     it "strips markdown code fences" do
-      raw = "```json\n#{FakeLLM.classification(classification: 'UNKNOWN')}\n```"
+      raw = "```json\n#{FakeLLM.classification(classification: "UNKNOWN")}\n```"
       step, errors = parse(raw)
 
       expect(errors).to be_empty

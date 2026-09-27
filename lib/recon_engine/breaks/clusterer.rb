@@ -2,6 +2,7 @@
 
 module ReconEngine
   module Breaks
+    # Groups breaks into clusters by type and signature, and ranks them.
     module Clusterer
       module_function
 

@@ -10,12 +10,13 @@
 # `rake eval` scores the offline provider, which must be perfect since it is a
 # rule table. `RECON_EVAL_PROVIDER=gemini rake eval` scores a real model on the
 # same dataset against a lower bar.
+#
+# The whole pipeline runs once in before(:all) and is shared through instance
+# variables: against a hosted model a single run costs real money and minutes.
 RSpec.describe "golden-set evaluation", :eval do
   def self.provider = ENV.fetch("RECON_EVAL_PROVIDER", "offline").to_sym
   def self.seed     = Integer(ENV.fetch("RECON_EVAL_SEED", "42"))
   def self.rows     = Integer(ENV.fetch("RECON_EVAL_ROWS", "600"))
-
-  MODEL_RECALL_THRESHOLD = 0.8
 
   before(:all) do
     @dir        = Dir.mktmpdir("recon-eval")
@@ -30,11 +31,12 @@ RSpec.describe "golden-set evaluation", :eval do
 
   after(:all) { FileUtils.remove_entry(@dir) if @dir }
 
-  def threshold = @report.model_backed_agent? ? MODEL_RECALL_THRESHOLD : 1.0
+  # A rule table must be perfect; a model gets a bar set before any model was run.
+  def threshold = @report.model_backed_agent? ? 0.8 : 1.0
 
   it "reports which provider it scored, so a run in CI is unambiguous" do
     summary = @evaluation.to_h
-    warn("\n[eval] provider=#{summary[:provider]} models=#{summary[:models].join(',')} " \
+    warn("\n[eval] provider=#{summary[:provider]} models=#{summary[:models].join(",")} " \
          "clusters=#{summary[:clusters_investigated]}/#{summary[:clusters]} coverage=#{summary[:coverage]}")
     expect(@report.findings).not_to be_empty
   end
@@ -65,7 +67,7 @@ RSpec.describe "golden-set evaluation", :eval do
   describe "the agent explains what the deterministic layer found" do
     it "meets the recall threshold for every fault kind" do
       by_kind = @evaluation.recall_by_kind
-      warn("[eval] recall #{by_kind.map { |kind, row| "#{kind}=#{row[:recall]}" }.join(' ')} " \
+      warn("[eval] recall #{by_kind.map { |kind, row| "#{kind}=#{row[:recall]}" }.join(" ")} " \
            "overall=#{@evaluation.overall_recall}")
 
       by_kind.each do |kind, row|

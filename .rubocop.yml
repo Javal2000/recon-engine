@@ -1,0 +1,85 @@
+plugins:
+  - rubocop-rake
+  - rubocop-rspec
+
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+  Exclude:
+    - "data/**/*"
+    - "out/**/*"
+    - "vendor/**/*"
+    - "coverage/**/*"
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# .gitattributes keeps every checkout on LF, including on Windows.
+Layout/EndOfLine:
+  EnforcedStyle: lf
+
+Layout/LineLength:
+  Max: 120
+
+# Limits set around where the code sits, so an outlier stands out. The
+# defaults (10-line methods) would push the reasoning in matching and
+# reporting into a scatter of tiny helpers.
+Metrics/MethodLength:
+  Max: 30
+
+Metrics/AbcSize:
+  Max: 35
+
+Metrics/CyclomaticComplexity:
+  Max: 12
+
+Metrics/PerceivedComplexity:
+  Max: 12
+
+Metrics/ClassLength:
+  Max: 200
+
+# Report and Finding take many named keyword arguments; that reads fine in a
+# way the same number of positional ones would not.
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+RSpec/ExampleLength:
+  Max: 12
+
+RSpec/MultipleExpectations:
+  Max: 4
+
+RSpec/MultipleMemoizedHelpers:
+  Max: 8
+
+# Specs are grouped by layer (spec/checks, spec/agent) rather than mirroring
+# the ReconEngine:: namespace one file per class.
+RSpec/SpecFilePathFormat:
+  Enabled: false
+
+# `class Foo < Data.define(...)` keeps constants such as BreakRecord::TYPES
+# inside the class. The block form this cop prefers leaks them into the
+# enclosing module.
+Style/DataInheritance:
+  Enabled: false
+
+# These describe behaviour across several classes, not one class.
+RSpec/DescribeClass:
+  Exclude:
+    - "spec/checks/checks_spec.rb"
+    - "spec/eval/golden_set_spec.rb"
+    - "spec/llm/providers_spec.rb"
+
+# The golden-set eval runs the whole pipeline once for the file and shares it
+# through instance variables; against a hosted model each run costs money.
+RSpec/InstanceVariable:
+  Exclude:
+    - "spec/eval/golden_set_spec.rb"
+
+RSpec/BeforeAfterAll:
+  Exclude:
+    - "spec/eval/golden_set_spec.rb"

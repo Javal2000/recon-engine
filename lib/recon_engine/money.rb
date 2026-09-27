@@ -19,7 +19,10 @@ module ReconEngine
         raise InputError, "amount is blank" if value.strip.empty?
 
         normalized = value.strip.delete(",").sub(/\A\+/, "")
-        raise InputError, "amount #{value.inspect} is not a decimal number" unless normalized.match?(/\A-?\d+(\.\d+)?\z/)
+        unless normalized.match?(/\A-?\d+(\.\d+)?\z/)
+          raise InputError,
+                "amount #{value.inspect} is not a decimal number"
+        end
 
         (BigDecimal(normalized) * 100).round.to_i
       when nil then raise InputError, "amount is missing"
@@ -33,7 +36,7 @@ module ReconEngine
       sign  = cents.negative? ? "-" : ""
       whole = cents.abs / 100
       frac  = cents.abs % 100
-      "#{sign}#{whole}.#{Kernel.format('%02d', frac)}"
+      "#{sign}#{whole}.#{Kernel.format("%02d", frac)}"
     end
 
     def humanize(cents)
