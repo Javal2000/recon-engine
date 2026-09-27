@@ -23,10 +23,11 @@ module ReconEngine
         Object.const_get(const_name).new(model: config.agent_model)
       end
 
-      attr_reader :model
+      attr_reader :model, :usage
 
       def initialize(model: nil)
         @model = model || self.class.default_model
+        @usage = Usage.zero
       end
 
       def self.default_model = nil

@@ -38,6 +38,11 @@ module ReconEngine
         }
       end
 
+      def usage_from(payload)
+        usage = payload.fetch("usage", {})
+        Usage.zero.with(input_tokens: usage["input_tokens"].to_i, output_tokens: usage["output_tokens"].to_i)
+      end
+
       def extract_text(payload)
         text = payload.fetch("content", []).filter_map { |block| block["text"] }.join
         raise ProviderError, "anthropic returned no text content" if text.empty?

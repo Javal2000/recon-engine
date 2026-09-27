@@ -19,6 +19,8 @@ module ReconEngine
       end
 
       def investigate(cluster)
+        @usage_before = @client.usage
+        @progress     = { steps: 0, tool_calls: 0, repairs: 0 }
         transcript = [{ role: "user", content: Prompt.initial(cluster, @tools) }]
         steps      = 0
         repairs    = 0
@@ -41,6 +43,7 @@ module ReconEngine
 
           if errors.any?
             repairs += 1
+            @progress[:repairs] = repairs
             if repairs > max_repairs
               return degraded(cluster, "model repeatedly returned schema-invalid output: #{errors.first}",
                               steps, tool_calls, repairs)
@@ -52,12 +55,14 @@ module ReconEngine
           end
 
           steps += 1
+          @progress[:steps] = steps
 
           case step["action"]
           when "classify"
             return finding(cluster, step, steps, tool_calls, repairs)
           when "use_tool"
             tool_calls += 1
+            @progress[:tool_calls] = tool_calls
             result = @tools.call(step["tool"], step["arguments"])
             transcript << { role: "assistant", content: JSON.generate(step) }
             transcript << { role: "user", content: Prompt.observation(step["tool"], result) }
@@ -67,7 +72,9 @@ module ReconEngine
         degraded(cluster, "reached the step budget (#{max_steps} steps) without classifying",
                  steps, tool_calls, repairs)
       rescue ProviderError, AgentError => e
-        degraded(cluster, e.message, 0, 0, 0)
+        # Report how far the investigation got before the provider failed, not
+        # zeros: the calls that did succeed were real and were paid for.
+        degraded(cluster, e.message, *@progress.values_at(:steps, :tool_calls, :repairs))
       end
 
       private
@@ -87,7 +94,8 @@ module ReconEngine
           tool_calls: tool_calls,
           repairs: repairs,
           degraded: false,
-          error: nil
+          error: nil,
+          usage: spent
         )
       end
 
@@ -100,9 +108,13 @@ module ReconEngine
           reason: reason,
           steps: steps,
           tool_calls: tool_calls,
-          repairs: repairs
+          repairs: repairs,
+          usage: spent
         )
       end
+
+      # What this cluster cost, as opposed to the client's running total.
+      def spent = @client.usage - @usage_before
     end
   end
 end

@@ -29,6 +29,10 @@ module ReconEngine
         }
       end
 
+      def usage_from(payload)
+        Usage.zero.with(input_tokens: payload["prompt_eval_count"].to_i, output_tokens: payload["eval_count"].to_i)
+      end
+
       def extract_text(payload)
         text = payload.dig("message", "content")
         raise ProviderError, "ollama returned no message content" if text.nil? || text.empty?

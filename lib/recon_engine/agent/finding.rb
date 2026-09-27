@@ -7,8 +7,11 @@ module ReconEngine
     # degraded. That is what separates a reasoned classification from a fallback.
     class Finding < Data.define(:cluster_id, :classification, :confidence, :evidence,
                                 :explanation, :suggested_action, :provider, :model,
-                                :model_backed, :steps, :tool_calls, :repairs, :degraded, :error)
-      def self.degraded_for(cluster_id, provider:, model:, model_backed:, reason:, steps: 0, tool_calls: 0, repairs: 0)
+                                :model_backed, :steps, :tool_calls, :repairs, :degraded, :error, :usage)
+      def initialize(usage: LLM::Usage.zero, **fields) = super
+
+      def self.degraded_for(cluster_id, provider:, model:, model_backed:, reason:, steps: 0, tool_calls: 0,
+                            repairs: 0, usage: LLM::Usage.zero)
         new(
           cluster_id: cluster_id,
           classification: "UNKNOWN",
@@ -23,7 +26,8 @@ module ReconEngine
           tool_calls: tool_calls,
           repairs: repairs,
           degraded: true,
-          error: reason
+          error: reason,
+          usage: usage
         )
       end
 
@@ -43,7 +47,8 @@ module ReconEngine
             tool_calls: tool_calls,
             schema_repairs: repairs,
             degraded: degraded,
-            error: error
+            error: error,
+            usage: usage.calls.positive? ? usage.to_report_h : nil
           }.compact
         }
       end

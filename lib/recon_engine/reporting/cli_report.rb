@@ -192,9 +192,22 @@ module ReconEngine
         return "  agent        disabled" unless report.config.agent_enabled
 
         backing = report.model_backed_agent? ? "model-backed" : "scripted stand-in (no model called)"
-        "  agent        #{report.config.agent_provider} #{sep} #{backing} #{sep} " \
-          "#{report.findings.length} clusters investigated"
+        line = "  agent        #{report.config.agent_provider} #{sep} #{backing} #{sep} " \
+               "#{report.findings.length} clusters investigated"
+        usage = report.agent_usage
+        return line unless usage.calls.positive?
+
+        "#{line}\n#{usage_footer(usage)}"
       end
+
+      def usage_footer(usage)
+        waited = usage.wait_ms.positive? ? " #{sep} #{seconds(usage.wait_ms)} waiting on rate limits" : ""
+        "  model usage  #{usage.calls} calls #{sep} #{group(usage.total_tokens)} tokens " \
+          "(#{group(usage.thinking_tokens)} thinking) #{sep} #{seconds(usage.latency_ms)} in the model#{waited}"
+      end
+
+      def seconds(milliseconds) = format("%.1fs", milliseconds / 1000.0)
+      def group(number)         = number.to_s.reverse.scan(/\d{1,3}/).join(",").reverse
 
       # --- formatting helpers ------------------------------------------------
 

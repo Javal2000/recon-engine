@@ -26,6 +26,38 @@ RSpec.describe ReconEngine::Agent::Investigator do
     expect(client.calls).to eq(1)
   end
 
+  it "records what each cluster cost rather than the client's running total" do
+    client = FakeLLM.new(responses: Array.new(2) { FakeLLM.classification(classification: "MISSING_IN_TARGET") },
+                         tokens_per_call: 10)
+    investigator = described_class.new(client: client, tools: tools, config: cfg)
+
+    first  = investigator.investigate(cluster)
+    second = investigator.investigate(cluster)
+
+    expect([first.usage.input_tokens, second.usage.input_tokens]).to eq([10, 10])
+    expect(client.usage.input_tokens).to eq(20)
+  end
+
+  it "keeps the cost of a cluster that degraded" do
+    client  = FakeLLM.new(responses: Array.new(20, "not json"), tokens_per_call: 3)
+    finding = described_class.new(client: client, tools: tools, config: cfg).investigate(cluster)
+
+    expect(finding.degraded).to be(true)
+    expect(finding.usage.calls).to eq(client.calls)
+    expect(finding.usage.input_tokens).to eq(3 * client.calls)
+  end
+
+  it "reports the progress made before a provider failure, not zeros" do
+    finding, = investigate([
+                             FakeLLM.tool_call("summarize_cluster", { "break_ids" => cluster.break_ids }),
+                             ReconEngine::ProviderError.new("HTTP 503: busy")
+                           ])
+
+    expect(finding.degraded).to be(true)
+    expect(finding.steps).to eq(1)
+    expect(finding.tool_calls).to eq(1)
+  end
+
   it "runs a real loop: tool, observation, tool, observation, classification" do
     finding, client = investigate([
                                     FakeLLM.tool_call("summarize_cluster", { "break_ids" => cluster.break_ids }),

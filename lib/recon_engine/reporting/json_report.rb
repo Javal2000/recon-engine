@@ -41,7 +41,8 @@ module ReconEngine
             provider: report.config.agent_provider.to_s,
             model_backed: report.model_backed_agent?,
             clusters_investigated: report.findings.length,
-            degraded: report.findings.count(&:degraded)
+            degraded: report.findings.count(&:degraded),
+            usage: report.agent_usage.to_report_h
           },
           clusters: report.clusters.map do |cluster|
             cluster.to_report_h.merge(finding: report.finding_for(cluster)&.to_report_h)

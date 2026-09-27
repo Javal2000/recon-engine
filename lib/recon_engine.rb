@@ -20,6 +20,9 @@ module ReconEngine
   AgentError      = Class.new(Error)
   # Raised when an LLM provider is misconfigured or unreachable.
   ProviderError   = Class.new(Error)
+  # Raised when a provider's quota won't reset within the run, so retrying is
+  # pointless.
+  QuotaExhausted  = Class.new(ProviderError)
 end
 
 require "recon_engine/version"
@@ -40,6 +43,7 @@ require "recon_engine/checks/control_totals"
 require "recon_engine/checks/duplicates"
 require "recon_engine/checks/schema_drift"
 require "recon_engine/checks/value_level"
+require "recon_engine/llm/usage"
 require "recon_engine/llm/client"
 require "recon_engine/llm/offline"
 require "recon_engine/llm/http_provider"

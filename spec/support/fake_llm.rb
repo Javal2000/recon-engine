@@ -6,8 +6,9 @@
 class FakeLLM < ReconEngine::LLM::Client
   attr_reader :transcripts, :systems
 
-  def initialize(responses:, model: "fake-1", model_backed: true)
+  def initialize(responses:, model: "fake-1", model_backed: true, tokens_per_call: 0)
     super(model: model)
+    @tokens_per_call = tokens_per_call
     @responses    = Array(responses)
     @model_backed = model_backed
     @transcripts  = []
@@ -21,6 +22,7 @@ class FakeLLM < ReconEngine::LLM::Client
   def complete(system:, transcript:)
     @systems << system
     @transcripts << transcript.map(&:dup)
+    @usage += ReconEngine::LLM::Usage.zero.with(calls: 1, input_tokens: @tokens_per_call)
     raise ReconEngine::ProviderError, "fake provider ran out of scripted responses" if @responses.empty?
 
     response = @responses.shift

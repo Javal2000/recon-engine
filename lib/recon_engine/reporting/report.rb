@@ -77,6 +77,10 @@ module ReconEngine
       def model_backed_agent?
         findings.any?(&:model_backed)
       end
+
+      def agent_usage
+        findings.map(&:usage).reduce(LLM::Usage.zero, :+)
+      end
     end
   end
 end

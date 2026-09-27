@@ -42,6 +42,14 @@ module ReconEngine
         }
       end
 
+      # Thinking tokens are billed but not included in candidatesTokenCount.
+      def usage_from(payload)
+        meta = payload.fetch("usageMetadata", {})
+        Usage.zero.with(input_tokens: meta["promptTokenCount"].to_i,
+                        output_tokens: meta["candidatesTokenCount"].to_i,
+                        thinking_tokens: meta["thoughtsTokenCount"].to_i)
+      end
+
       def extract_text(payload)
         text = payload.dig("candidates", 0, "content", "parts", 0, "text")
         return text unless text.nil?
