@@ -17,4 +17,9 @@ task :demo do
   sh(RbConfig.ruby, "bin/recon", "demo")
 end
 
+desc "Time the deterministic layer (BENCH_ROWS=10000,100000 by default)"
+task :bench do
+  ruby "bench/throughput.rb"
+end
+
 task default: %i[spec eval]

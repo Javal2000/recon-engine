@@ -86,8 +86,7 @@ module ReconEngine
         return { "error" => "source must be \"ledger\" or \"warehouse\"" } if source.nil?
 
         limit = [(args["limit"] || 10).to_i, MAX_ROWS].min.clamp(1, MAX_ROWS)
-        rows  = @context.rows_of(source)
-        rows  = rows.select { |t| t.account_id == args["account_id"] } if args["account_id"]
+        rows  = args["account_id"] ? by_account(source).fetch(args["account_id"], []) : @context.rows_of(source)
         rows  = rows.select { |t| t.posted_date.iso8601 == args["date"] } if args["date"]
         rows  = rows.select { |t| t.txn_id == args["txn_id"] } if args["txn_id"]
 
@@ -181,16 +180,24 @@ module ReconEngine
       end
 
       def count_rows(source, account, currency, day)
-        @context.rows_of(source).count do |t|
-          t.account_id == account && t.currency == currency && t.posted_date == day
-        end
+        by_day(source).fetch([account, currency, day], []).length
       end
 
       def amount_matches(source, account, currency, day, cents)
-        @context.rows_of(source).count do |t|
-          t.account_id == account && t.currency == currency && t.posted_date == day &&
-            Money.within_tolerance?(t.amount_cents, cents, @config.tolerance_cents)
+        by_day(source).fetch([account, currency, day], []).count do |t|
+          Money.within_tolerance?(t.amount_cents, cents, @config.tolerance_cents)
         end
+      end
+
+      # Built once per source on first use. Every timing lookup is keyed by
+      # account, currency and day, so a call reads one small bucket instead of
+      # scanning every row.
+      def by_day(source)
+        (@by_day ||= {})[source] ||= @context.rows_of(source).group_by { |t| [t.account_id, t.currency, t.posted_date] }
+      end
+
+      def by_account(source)
+        (@by_account ||= {})[source] ||= @context.rows_of(source).group_by(&:account_id)
       end
     end
   end
