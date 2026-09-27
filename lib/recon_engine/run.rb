@@ -46,7 +46,7 @@ module ReconEngine
       )
 
       breaks   = run_checks(context)
-      clusters = Breaks::Clusterer.call(breaks)
+      clusters = Breaks::Attribution.new(breaks, context).annotate(Breaks::Clusterer.call(breaks))
       findings = investigate(clusters, context, breaks)
 
       Reporting::Report.new(
@@ -98,7 +98,11 @@ module ReconEngine
     # engine exists to catch: a whole feed arriving a day late is thousands of
     # breaks worth zero dollars. So most of the budget goes by money and the
     # rest by volume, and the union is investigated in report order.
+    #
+    # Aggregate clusters the engine has already explained exactly are left out:
+    # there is nothing for a model to add.
     def investigation_targets(clusters)
+      clusters  = clusters.reject(&:explained?)
       budget    = @config.agent_max_clusters
       position  = clusters.each_with_index.to_h
       by_money  = clusters.first(budget)

@@ -55,6 +55,15 @@ RSpec.describe "golden-set evaluation", :eval do
       expect(scored).to eq(@manifest["fault_counts"].slice(*ReconEngine::Evaluation::SCORED.keys))
     end
 
+    # Every day's total and row count should be exactly the sum of the rows
+    # already reported, with nothing left for a model to guess at.
+    it "explains every control total and row count to the cent" do
+      attributed = @report.clusters.select(&:attribution)
+
+      expect(attributed.map(&:type).uniq).to contain_exactly(:control_total_mismatch, :row_count_mismatch)
+      expect(attributed).to all(be_explained)
+    end
+
     it "does not invent breaks for rows that were only made harder to match" do
       # composite_only rows have no transaction id downstream; split rows arrive
       # as three legs. Both must reconcile silently.

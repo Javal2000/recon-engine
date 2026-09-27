@@ -74,6 +74,15 @@ RSpec.describe ReconEngine::Run do
   describe "the report" do
     subject(:report) { reconcile }
 
+    it "explains every aggregate cluster from the row-level breaks and keeps it from the agent" do
+      aggregates = report.clusters.reject(&:row_level?).select(&:attribution)
+
+      expect(aggregates).not_to be_empty
+      expect(aggregates).to all(be_explained)
+      expect(report.findings.map(&:cluster_id)).not_to include(*aggregates.map(&:id))
+      expect(report.classification_summary).to include("EXPLAINED")
+    end
+
     it "finds the faults the generator injected" do
       expect(report.breaks_by_type).to include("missing_in_target", "duplicate", "value_mismatch")
       expect(report.break_count).to be > 0

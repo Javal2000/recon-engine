@@ -54,7 +54,8 @@ RSpec.describe ReconEngine::CLI do
   it "prints the human report unless --quiet" do
     cli("run", "--ledger", manifest["paths"]["ledger"], "--warehouse", manifest["paths"]["warehouse"], "--no-agent")
 
-    expect(stdout.string).to include("RECONCILIATION REPORT", "MATCHING", "agent        disabled")
+    expect(stdout.string).to include("RECONCILIATION REPORT", "MATCHING", "agent        disabled",
+                                     "EXPLAINED by the row-level breaks")
   end
 
   it "generates data and prints the manifest summary" do

@@ -8,8 +8,11 @@ module ReconEngine
     # is one cause and fifty thousand missing-row breaks. Clustering is also what
     # makes the agent affordable, since the LLM runs once per cluster.
     class Cluster < Data.define(:id, :type, :signature, :break_ids, :count,
-                                :magnitude_cents, :partitions, :samples)
+                                :magnitude_cents, :partitions, :samples, :attribution)
       MAX_SAMPLES = 3
+
+      # Only aggregate clusters carry an attribution (see Breaks::Attribution).
+      def initialize(attribution: nil, **fields) = super
 
       def self.build(type:, signature:, breaks:)
         ordered = breaks.sort_by(&:id)
@@ -39,9 +42,12 @@ module ReconEngine
           magnitude: Money.format(magnitude_cents),
           magnitude_cents: magnitude_cents,
           partitions: partitions,
-          sample_breaks: samples.map(&:to_report_h)
-        }
+          sample_breaks: samples.map(&:to_report_h),
+          attribution: attribution&.to_report_h
+        }.compact
       end
+
+      def explained? = attribution&.explained? || false
     end
   end
 end

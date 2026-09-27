@@ -46,7 +46,9 @@ module ReconEngine
       end
 
       def classification_summary
-        grouped = clusters.group_by { |c| finding_for(c)&.classification || "NOT_INVESTIGATED" }
+        grouped = clusters.group_by do |cluster|
+          finding_for(cluster)&.classification || (cluster.explained? ? "EXPLAINED" : "NOT_INVESTIGATED")
+        end
         summary = grouped.transform_values do |group|
           { clusters: group.length, breaks: group.sum(&:count),
             magnitude_cents: group.sum { |c| c.magnitude_cents.abs } }

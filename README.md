@@ -38,9 +38,9 @@ The model is kept away from the arithmetic in three ways:
 
 ```
 ledger.csv ─┐
-            ├─► profile ─► match ─► check ─► cluster ─┬─► CLI report
-warehouse.csv┘                                        │   JSON report
-                                                      └─► agent
+            ├─► profile ─► match ─► check ─► cluster ─► attribute ─┬─► CLI report
+warehouse.csv┘                                                     │   JSON report
+                                                                   └─► agent
 ```
 
 **Profile.** One streaming pass per file with `CSV.foreach`. Control totals, row counts and duplicate detection only need counters, so memory grows with the number of distinct keys, not rows.
@@ -71,7 +71,22 @@ Each break records its type, the affected rows, the dollar amount and a partitio
 
 **Cluster.** One skipped partition upstream can produce thousands of missing-row breaks with a single cause. Breaks are grouped by type and a type-specific signature (partition for missing rows, the differing fields for value mismatches), then ranked row-level first, then by dollars, then by count. That way a whole feed arriving a day late still ranks high even though it's worth $0. The agent runs once per cluster, not once per break.
 
-**Investigate.** For each cluster the agent calls tools until it can justify a classification:
+**Attribute.** A day's control total that doesn't tie is almost never a separate problem: it's the rows already reported, seen as a sum. So the engine explains each control-total and row-count break itself, by adding up the effect of every row-level break on that day and currency. A missing row takes its amount away, an orphan adds it, and a late row takes it off one day and puts it on the next. Split deposits that reconciled cleanly count too, since they add rows without raising a break, which is also why the row-count check used to flag them.
+
+On the demo data every aggregate break balances to the cent:
+
+```
+18. Control total does not tie -- 11 break(s), -$26,966.60
+   EXPLAINED by the row-level breaks on the same days
+        -$16,945.25  orphan in warehouse (5)
+        -$13,614.95  missing in warehouse (11)
+          $3,393.60  extra duplicate copies (4)
+            $200.00  changed amounts (4)
+```
+
+A cluster only counts as explained when every day in it balances, so errors of +$5 and -$5 on two different days can't cancel each other out. Explained clusters don't go to the agent at all. Whatever is left over would mean the row-level checks missed something, and only that residual is sent to the model. It's zero on every dataset I've generated, across 172 control totals and 136 row counts.
+
+**Investigate.** For each remaining cluster the agent calls tools until it can justify a classification:
 
 | Tool | Returns |
 |---|---|
@@ -120,7 +135,7 @@ Results on the default eval set (600 ledger rows, seed 42, 85 scored breaks acro
 | Tokens | none | 107,264 |
 | Time in the model | none | 96 s, plus 165 s waiting on free-tier rate limits |
 
-The rule table scores 100% by construction; it's there as the control. Its calibration error of 0.25 comes from always stating 0.75 confidence while always being right. The model is slightly underconfident the same way, right every time at about 0.96.
+These runs predate attribution, when the 6 aggregate clusters still went to the model; they're now explained by the engine, so a run makes fewer calls. The row-level clusters, which the recall figures are about, are sent exactly as before. The rule table scores 100% by construction; it's there as the control. Its calibration error of 0.25 comes from always stating 0.75 confidence while always being right. The model is slightly underconfident the same way, right every time at about 0.96.
 
 The first run scored 95%, with orphans at 20%, and the misses pointed at two real problems:
 
@@ -151,7 +166,7 @@ The tolerance and the timing window only decide matches in passes 2 and 3, where
 
 ## Providers
 
-`--provider offline` is the default. It's a rule table that speaks the same JSON protocol as a model, so the demo and CI run without credentials, and reports mark its findings as not model-backed. It returns `UNKNOWN` for control-total breaks on purpose, because attributing those means cross-referencing other clusters.
+`--provider offline` is the default. It's a rule table that speaks the same JSON protocol as a model, so the demo and CI run without credentials, and reports mark its findings as not model-backed. Control totals and row counts never reach it, because the engine explains those itself.
 
 ```bash
 export GEMINI_API_KEY=...     && bin/recon demo --provider gemini      # free tier
@@ -218,7 +233,6 @@ That's about 1.1 KB of heap per ledger row, counting its warehouse counterpart. 
 
 - An on-disk sort-merge join and partition-parallel runs, since reconciliation splits cleanly by date and account.
 - A `breaks` table keyed on the break ids, for break ageing ("open for nine days") and schema drift across runs.
-- Explaining control totals directly. A day's control-total delta should equal the sum of the row-level breaks in that partition, so the engine could attribute it itself and hand the agent only what's left over.
 - A per-run token budget. Usage is already tracked per finding, and a circuit breaker stops calling a provider that's out of quota; a ceiling on tokens is the missing piece.
 - Periodic human review of agent findings, feeding back into the golden set.
 - Skipping notifications when a run's fingerprint matches the previous one.

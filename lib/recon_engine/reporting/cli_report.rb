@@ -6,35 +6,9 @@ module ReconEngine
     # likely causes, and only then individual rows. Clusters lead and raw breaks
     # are summarised.
     class CliReport
-      WIDTH = 78
+      include TerminalText
 
-      # ANSI colour, suppressed when stdout is not a TTY so that piping to a file
-      # or capturing in CI does not fill the output with escape codes.
-      COLORS = { red: 31, green: 32, yellow: 33, blue: 34, grey: 90 }.freeze
-
-      # Unicode glyphs when the terminal can render them, ASCII otherwise. A
-      # Windows console on the legacy code page turns "·" into mojibake.
-      GLYPHS = {
-        unicode: { sep: "·", ellipsis: "…", arrow: "→", dash: "—" },
-        ascii: { sep: "|", ellipsis: "...", arrow: "->", dash: "--" }
-      }.freeze
-
-      # Agent explanations are free text written by a model, and models emit
-      # em-dashes and curly quotes freely. Transliterating at the very end
-      # catches whatever the provider decided to send.
-      TRANSLITERATIONS = {
-        "—" => "--", "–" => "-", "·" => "|", "…" => "...", "→" => "->",
-        "“" => '"', "”" => '"', "‘" => "'", "’" => "'", "•" => "*", " " => " "
-      }.freeze
-
-      def self.unicode_terminal?
-        encoding = $stdout.external_encoding || Encoding.default_external
-        encoding.to_s.match?(/UTF-8/i)
-      rescue StandardError
-        false
-      end
-
-      def initialize(report, color: $stdout.tty?, unicode: self.class.unicode_terminal?)
+      def initialize(report, color: $stdout.tty?, unicode: TerminalText.unicode_terminal?)
         @report = report
         @color  = color
         @glyphs = GLYPHS.fetch(unicode ? :unicode : :ascii)
@@ -56,11 +30,6 @@ module ReconEngine
       private
 
       attr_reader :report
-
-      def sep      = @glyphs[:sep]
-      def ellipsis = @glyphs[:ellipsis]
-      def arrow    = @glyphs[:arrow]
-      def dash     = @glyphs[:dash]
 
       def header
         [
@@ -149,11 +118,34 @@ module ReconEngine
                    "#{position}. #{cluster.label} #{dash} #{cluster.count} break(s), " \
                    "#{Money.humanize(cluster.magnitude_cents)}",
                    colorize("   #{cluster.id} #{sep} #{signature_text(cluster)}", :grey)]
-        if finding.nil?
-          return lines << colorize("   not investigated (agent disabled or cluster budget reached)", :grey)
-        end
+        lines.concat(attribution_lines(cluster.attribution)) if cluster.attribution
+        return lines + finding_lines(finding) if finding
+        return lines if cluster.explained?
 
-        lines + finding_lines(finding)
+        lines << colorize("   not investigated (agent disabled or cluster budget reached)", :grey)
+      end
+
+      def attribution_lines(attribution)
+        lines = attribution.components.map do |c|
+          note = c.value.zero? ? ", nets to zero across these days" : ""
+          "     #{amount_of(attribution, c.value).rjust(14)}  #{c.label} (#{c.breaks})#{note}"
+        end
+        [attribution_head(attribution), *lines]
+      end
+
+      def attribution_head(attribution)
+        if attribution.explained?
+          "#{colorize("   EXPLAINED", :green)} by the row-level breaks on the same days"
+        else
+          "#{colorize("   PARTLY EXPLAINED", :yellow)} #{dash} #{amount_of(attribution, attribution.residual)} " \
+            "left over on #{attribution.unexplained} day(s)"
+        end
+      end
+
+      def amount_of(attribution, value)
+        return Money.humanize(value) if attribution.measure == :cents
+
+        "#{format("%+d", value)} row#{"s" unless value.abs == 1}"
       end
 
       def finding_lines(finding)
@@ -216,43 +208,6 @@ module ReconEngine
         waited = usage.wait_ms.positive? ? " #{sep} #{seconds(usage.wait_ms)} waiting on rate limits" : ""
         "  model usage  #{usage.calls} calls #{sep} #{group(usage.total_tokens)} tokens " \
           "(#{group(usage.thinking_tokens)} thinking) #{sep} #{seconds(usage.latency_ms)} in the model#{waited}"
-      end
-
-      def seconds(milliseconds) = format("%.1fs", milliseconds / 1000.0)
-      def group(number)         = number.to_s.reverse.scan(/\d{1,3}/).join(",").reverse
-
-      # --- formatting helpers ------------------------------------------------
-
-      def rule(char) = char * WIDTH
-
-      def center(text)
-        padding = [(WIDTH - text.length) / 2, 0].max
-        (" " * padding) + text
-      end
-
-      def wrap(text, indent, width: WIDTH)
-        limit = width - indent.length
-        words = text.to_s.split(/\s+/)
-        lines = words.each_with_object([[]]) do |word, acc|
-          if (acc.last + [word]).join(" ").length > limit && !acc.last.empty?
-            acc << [word]
-          else
-            acc.last << word
-          end
-        end
-        lines.map { |line| indent + line.join(" ") }.join("\n")
-      end
-
-      def asciify(text)
-        swapped = text.gsub(Regexp.union(TRANSLITERATIONS.keys), TRANSLITERATIONS)
-        swapped.encode("US-ASCII", invalid: :replace, undef: :replace, replace: "?")
-               .encode(text.encoding)
-      end
-
-      def colorize(text, color)
-        return text unless @color && COLORS.key?(color)
-
-        "\e[#{COLORS[color]}m#{text}\e[0m"
       end
     end
   end
