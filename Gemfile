@@ -16,5 +16,8 @@ group :development, :test do
   gem "rubocop", require: false
   gem "rubocop-rake", require: false
   gem "rubocop-rspec", require: false
-  gem "simplecov", require: false
+
+  # Newer releases of these two need Ruby 3.3, and CI still runs 3.2.
+  gem "parallel", "< 2", require: false
+  gem "simplecov", "< 1", require: false
 end
