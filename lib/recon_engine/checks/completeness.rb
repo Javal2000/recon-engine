@@ -7,7 +7,7 @@ module ReconEngine
     # a T+1 settlement inside the timing window never reaches this check.
     class Completeness < Base
       def call(context)
-        missing = context.match_result.unmatched_ledger.map do |txn|
+        missing = without_surplus(context.match_result.unmatched_ledger, context.ledger_profile).map do |txn|
           Breaks::BreakRecord.build(
             type: :missing_in_target,
             partition: { date: txn.posted_date, account_id: txn.account_id, currency: txn.currency },
@@ -21,7 +21,7 @@ module ReconEngine
           )
         end
 
-        orphans = context.match_result.unmatched_warehouse.map do |txn|
+        orphans = without_surplus(context.match_result.unmatched_warehouse, context.warehouse_profile).map do |txn|
           Breaks::BreakRecord.build(
             type: :orphan_in_target,
             partition: { date: txn.posted_date, account_id: txn.account_id, currency: txn.currency },
@@ -36,6 +36,26 @@ module ReconEngine
         end
 
         missing + orphans
+      end
+
+      private
+
+      # An extra copy of a business key that appears more than once in the same
+      # source is already a Duplicates break. Reporting it here as well would
+      # count the same money twice in the headline impact and scatter one cause
+      # across two clusters. If no copy found a counterpart, one of them is
+      # still genuinely unmatched and stays in.
+      def without_surplus(unmatched, profile)
+        duplicated = profile.duplicate_keys
+        skipped    = Hash.new(0)
+
+        unmatched.reject do |txn|
+          copies = duplicated[txn.business_key]
+          next false if copies.nil? || skipped[txn.business_key] >= copies.length - 1
+
+          skipped[txn.business_key] += 1
+          true
+        end
       end
     end
   end

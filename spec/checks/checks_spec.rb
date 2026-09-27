@@ -23,6 +23,27 @@ RSpec.describe "deterministic checks" do
       expect(records.first.warehouse_refs).to eq(["warehouse:1"])
     end
 
+    describe "duplicated keys" do
+      let(:doubled) { warehouse({ id: "TXN-1", amount: "50.00" }, { id: "TXN-1", amount: "50.00" }) }
+
+      it "leaves a duplicate's extra copy to the Duplicates check" do
+        expect(breaks_from(described_class, ledger(id: "TXN-1", amount: "50.00"), doubled)).to be_empty
+      end
+
+      it "still reports one orphan when no copy of the key has a counterpart" do
+        records = breaks_from(described_class, [], doubled)
+
+        expect(records.map(&:type)).to eq([:orphan_in_target])
+      end
+
+      it "counts the surplus money once across both checks" do
+        rows    = [ledger(id: "TXN-1", amount: "50.00"), doubled]
+        records = [described_class, ReconEngine::Checks::Duplicates].flat_map { |check| breaks_from(check, *rows) }
+
+        expect(records.select(&:row_level?).sum { |b| b.magnitude_cents.abs }).to eq(5_000)
+      end
+    end
+
     # The reason the timing window exists at all: without it this is two breaks
     # for one non-event.
     it "reports nothing for a T+1 settlement" do
