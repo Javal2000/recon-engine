@@ -102,14 +102,32 @@ The agent isn't deterministic, so I test it at three levels.
 
 **The output, through schema validation.** `Agent::Schema` is the only place model output gets parsed. It tolerates what models commonly send (markdown fences, a missing `action` key) and rejects everything else.
 
-**The model, against a golden set.** The data generator injects known faults and writes a manifest listing each one with the classification it should get. `spec/eval/golden_set_spec.rb` runs the whole pipeline over that data and checks recall per fault type against a threshold, not exact wording.
+**The model, against a golden set.** The data generator injects known faults and writes a manifest listing each one with the classification it should get. `bin/recon eval` runs the whole pipeline over that data and reports recall per fault type, how well the stated confidence matches the accuracy, how many breaks got a real answer at all, and what the run cost. `spec/eval/golden_set_spec.rb` holds the result to a threshold: 100% for the offline rule table, 80% per fault type for a model.
 
 ```bash
-rake eval                              # the offline rule table, as a baseline
-RECON_EVAL_PROVIDER=gemini rake eval   # a real model on the same data
+bin/recon eval                                                  # the offline rule table, as a baseline
+bin/recon eval --provider gemini --model gemini-3.1-flash-lite  # a real model on the same data
 ```
 
-The difference between those two runs is what the model actually adds. Evals are tagged `:eval` and kept out of `rake spec`, since against a hosted provider they cost money.
+Results on the default eval set (600 ledger rows, seed 42, 85 scored breaks across 7 fault types):
+
+| | Offline rule table | gemini-3.1-flash-lite |
+|---|---:|---:|
+| Recall, all 7 fault types | 100% | 100% |
+| Calibration error | 0.25 | 0.035 |
+| Breaks that got a real answer | 100% | 100% |
+| Model calls | none | 54 |
+| Tokens | none | 107,264 |
+| Time in the model | none | 96 s, plus 165 s waiting on free-tier rate limits |
+
+The rule table scores 100% by construction; it's there as the control. Its calibration error of 0.25 comes from always stating 0.75 confidence while always being right. The model is slightly underconfident the same way, right every time at about 0.96.
+
+The first run scored 95%, with orphans at 20%, and the misses pointed at two real problems:
+
+1. **An engine bug.** A duplicated row's surplus copy was reported twice, once by the duplicates check and again as an orphan. That inflated the demo's headline dollar impact by 22%, and it put duplicates into orphan clusters, where the model was marked wrong for calling a mostly-duplicate cluster a duplicate. Fixing it took the model to 96%.
+2. **An ambiguous label.** The model's explanations had the facts right ("present in the warehouse, no ledger record") and then picked `MISSING_IN_TARGET`, because the prompt never said which direction that label meant. Clarifying two definitions took orphans from 40% to 100%.
+
+Each figure is a single run. At temperature 0 they should hold, but I haven't repeated them. The eval uses flash-lite because the free tier allows only 20 requests a day for the default `gemini-3.8-flash`, and a full eval takes about 54. Evals are tagged `:eval` and kept out of `rake spec`, since against a hosted provider they cost money.
 
 ## Checking it yourself
 
@@ -144,6 +162,8 @@ ollama pull llama3.1          && bin/recon demo --provider ollama      # local
 
 Override the model with `--model` or `RECON_AGENT_MODEL`. `fetch_rows` sends up to 20 raw rows to whichever provider you pick, so with real data use `--provider ollama` or `--no-agent`.
 
+Rate limits are handled the way the provider asks. A 429 waits as long as the server says, from `Retry-After` or Google's `RetryInfo` block, capped at a minute. A daily quota stops calls for the rest of the run instead of retrying, and so do three failed calls in a row; the remaining clusters get `UNKNOWN` straight away and the deterministic report ships regardless. Every finding records the calls, tokens and time it cost, with thinking tokens counted separately, and the report totals them.
+
 ## Usage
 
 ```bash
@@ -151,6 +171,7 @@ bin/recon demo
 bin/recon generate --dir data --seed 42 --rows 5000
 bin/recon run --ledger data/ledger.csv --warehouse data/warehouse.csv --json out/report.json
 bin/recon run --ledger a.csv --warehouse b.csv --no-agent
+bin/recon eval --provider gemini
 ```
 
 | Option | Default | Effect |
@@ -177,7 +198,15 @@ Keeping 1 and 2 separate lets a scheduler alert on bad data and page on a broken
 
 **Idempotency.** The fingerprint is a SHA-256 over the input digests, the deterministic settings, the matching outcome and every break id. It leaves out timestamps, durations, hostnames and agent output. `spec/run_spec.rb` checks that reruns match and that the fingerprint changes when an input byte or a setting does. Getting there took integer cents, content-addressed ids and a total order on everything that reaches a report.
 
-**Memory.** Profiling streams. Matching loads both files because it needs random access, so memory is O(ledger + warehouse). For much larger inputs I'd replace pass 2 with an external sort-merge join on `(account, currency, date)`, which keeps memory to one partition at a time.
+**Memory and speed.** Profiling streams. Matching loads both files because it needs random access, so memory grows with both. `rake bench` measures it; one run on a Windows laptop with Ruby 3.3 and the agent off:
+
+| Ledger rows | Total | Rows/s | Heap |
+|---:|---:|---:|---:|
+| 10,000 | 1.2 s | 16,580 | 15 MB |
+| 100,000 | 12.4 s | 16,165 | 115 MB |
+| 1,000,000 | 157 s | 12,714 | 1.1 GB |
+
+That's about 1.1 KB of heap per ledger row, counting its warehouse counterpart. Each file is currently parsed twice, once to profile and once to load, and at 1M rows profiling is the slowest phase, so a single pass is the first thing I'd change. For much larger inputs I'd replace pass 2 with an external sort-merge join on `(account, currency, date)`, which keeps memory to one partition at a time.
 
 **Encrypted columns.** Deterministically encrypted or tokenized ids work unchanged, since pass 1 only compares them for equality. Encrypted amounts and dates don't: the tolerance, the timing window, split matching and control totals all need arithmetic. The loader rejects a non-decimal amount anyway.
 
@@ -189,7 +218,8 @@ Keeping 1 and 2 separate lets a scheduler alert on bad data and page on a broken
 
 - An on-disk sort-merge join and partition-parallel runs, since reconciliation splits cleanly by date and account.
 - A `breaks` table keyed on the break ids, for break ageing ("open for nine days") and schema drift across runs.
-- A per-run token budget with a circuit breaker on the agent.
+- Explaining control totals directly. A day's control-total delta should equal the sum of the row-level breaks in that partition, so the engine could attribute it itself and hand the agent only what's left over.
+- A per-run token budget. Usage is already tracked per finding, and a circuit breaker stops calling a provider that's out of quota; a ceiling on tokens is the missing piece.
 - Periodic human review of agent findings, feeding back into the golden set.
 - Skipping notifications when a run's fingerprint matches the previous one.
 
@@ -197,13 +227,15 @@ Keeping 1 and 2 separate lets a scheduler alert on bad data and page on a broken
 
 ```bash
 bundle install
-rake spec     # unit and integration specs, model mocked, no network
-rake eval     # golden-set evaluation against the configured provider
-rake          # both
-rake demo     # generate and reconcile
+rake spec             # unit and integration specs, model mocked, no network
+COVERAGE=1 rake spec  # the same, failing below 94% line or 77% branch coverage
+rake eval             # golden-set evaluation against the configured provider
+rake bench            # timing and memory (BENCH_ROWS=10000,100000 by default)
+rake demo             # generate and reconcile
+bundle exec rubocop
 ```
 
-CI runs on Ruby 3.2, 3.3 and 3.4.
+CI runs RuboCop once, and on each of Ruby 3.2, 3.3 and 3.4 the coverage-checked specs, the eval and an end-to-end demo. Coverage is currently 95.6% of lines and 79.8% of branches.
 
 ```
 lib/recon_engine/
@@ -218,6 +250,7 @@ lib/recon_engine/
 ├── llm/              provider adapters and the offline stand-in
 ├── reporting/        CLI and JSON reports
 ├── generator.rb      synthetic data and fault manifest
+├── evaluation.rb     scores the agent against the manifest
 └── run.rb            orchestration
 ```
 
