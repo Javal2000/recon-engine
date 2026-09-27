@@ -10,7 +10,7 @@ module ReconEngine
     EXIT_BREAKS = 1
     EXIT_ERROR  = 2
 
-    COMMANDS = %w[demo generate run version help].freeze
+    COMMANDS = %w[demo generate run eval version help].freeze
 
     def initialize(argv, stdout: $stdout, stderr: $stderr)
       @argv   = argv.dup
@@ -35,6 +35,7 @@ module ReconEngine
       when "demo"     then demo
       when "generate" then generate
       when "run"      then reconcile
+      when "eval"     then evaluate
       when "version"
         @stdout.puts("recon-engine #{ReconEngine::VERSION}")
         EXIT_CLEAN
@@ -105,6 +106,51 @@ module ReconEngine
       emit(report, options)
     end
 
+    # Generate a dataset, run the whole pipeline with every cluster
+    # investigated, and score the agent against the manifest.
+    def evaluate
+      options = parse(%w[eval]) do |parser, opts|
+        parser.on("--seed N", Integer, "generator seed (default: 42)") { |v| opts[:seed] = v }
+        parser.on("--rows N", Integer, "ledger rows (default: 600)") { |v| opts[:rows] = v }
+        parser.on("--markdown PATH", "also write the results table as Markdown") { |v| opts[:markdown] = v }
+      end
+
+      evaluation = Dir.mktmpdir("recon-eval") do |dir|
+        manifest = Generator.new(seed: options.fetch(:seed, 42), rows: options.fetch(:rows, 600)).write(dir)
+        report   = Run.call(ledger_path: manifest["paths"]["ledger"], warehouse_path: manifest["paths"]["warehouse"],
+                            config: config_from({ agent_max_clusters: 100 }.merge(options)))
+        Evaluation.new(manifest: manifest, report: report)
+      end
+
+      print_evaluation(evaluation)
+      write_file(options[:json], JSON.pretty_generate(evaluation.to_h)) if options[:json]
+      write_file(options[:markdown], "#{evaluation.to_markdown}
+") if options[:markdown]
+      EXIT_CLEAN
+    end
+
+    def print_evaluation(evaluation)
+      summary = evaluation.to_h
+      usage   = summary[:usage]
+      @stdout.puts("provider #{summary[:provider]} #{summary[:models].join(', ')}, "                    "#{summary[:clusters_investigated]}/#{summary[:clusters]} clusters investigated")
+      @stdout.puts
+      @stdout.puts(evaluation.to_markdown)
+      @stdout.puts
+      @stdout.puts("coverage #{(summary[:coverage] * 100).round}% of scored breaks got a non-degraded answer")
+      if (ece = summary[:calibration][:expected_calibration_error])
+        @stdout.puts("calibration error #{ece}")
+      end
+      return unless usage[:calls].positive?
+
+      @stdout.puts("#{usage[:calls]} model calls, #{usage[:total_tokens]} tokens "                    "(#{usage[:thinking_tokens]} thinking), #{(usage[:latency_ms] / 1000.0).round(1)}s in the model")
+    end
+
+    def write_file(path, content)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, content)
+      @stdout.puts("written to #{path}")
+    end
+
     def help
       @stdout.puts(<<~TEXT)
         recon-engine #{ReconEngine::VERSION}. Prove two records of the same activity agree,
@@ -114,6 +160,7 @@ module ReconEngine
           bin/recon demo                            generate synthetic data and reconcile it
           bin/recon generate --dir data             write synthetic data with injected faults
           bin/recon run --ledger A --warehouse B    reconcile two CSVs
+          bin/recon eval --provider gemini          score the agent against a generated answer key
           bin/recon version
 
         COMMON OPTIONS
@@ -123,7 +170,7 @@ module ReconEngine
           --model NAME            provider-specific model id
           --tolerance-cents N     amounts within +/- N cents are equal (default 1)
           --timing-window-days N  settlement lag allowed when matching (default 1)
-          --max-clusters N        clusters to investigate per run (default 25)
+          --max-clusters N        clusters to investigate per run (default 40)
 
         EXIT CODES
           0 clean   1 breaks found   2 tool error
