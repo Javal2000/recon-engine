@@ -157,7 +157,7 @@ The tolerance and the timing window only decide matches in passes 2 and 3, where
 export GEMINI_API_KEY=...     && bin/recon demo --provider gemini      # free tier
 export ANTHROPIC_API_KEY=...  && bin/recon demo --provider anthropic
 export OPENAI_API_KEY=...     && bin/recon demo --provider openai
-ollama pull llama3.1          && bin/recon demo --provider ollama      # local
+ollama pull llama3.1:8b       && bin/recon demo --provider ollama      # local
 ```
 
 Override the model with `--model` or `RECON_AGENT_MODEL`. `fetch_rows` sends up to 20 raw rows to whichever provider you pick, so with real data use `--provider ollama` or `--no-agent`.

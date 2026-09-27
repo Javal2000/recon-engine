@@ -71,6 +71,18 @@ RSpec.describe "LLM providers" do
       expect(headers(described_class)).not_to have_key("authorization")
     end
 
+    # Without an explicit window, Ollama silently cuts the start of a long
+    # prompt, which is where the rules are.
+    it "asks for a context window big enough for a whole investigation" do
+      expect(body(described_class)[:options]).to include(num_ctx: described_class::CONTEXT_TOKENS)
+    end
+
+    it "waits longer than a hosted provider before timing out" do
+      client = described_class.new(model: "m")
+
+      expect(client.send(:read_timeout)).to be > ReconEngine::LLM::HttpProvider::READ_TIMEOUT
+    end
+
     it "reads the message content" do
       expect(text(described_class, "message" => { "content" => "{}" })).to eq("{}")
       expect { text(described_class, {}) }.to raise_error(ReconEngine::ProviderError)

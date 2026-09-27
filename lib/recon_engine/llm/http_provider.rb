@@ -60,6 +60,8 @@ module ReconEngine
       def extract_text(_payload)        = raise(NotImplementedError)
       def usage_from(_payload)          = Usage.zero
 
+      def read_timeout = READ_TIMEOUT
+
       # Providers that need a key override this; Ollama does not.
       def api_key_env = nil
 
@@ -105,7 +107,7 @@ module ReconEngine
         http = Net::HTTP.new(uri.host, uri.port)
         http.use_ssl      = uri.scheme == "https"
         http.open_timeout = OPEN_TIMEOUT
-        http.read_timeout = READ_TIMEOUT
+        http.read_timeout = read_timeout
         request = Net::HTTP::Post.new(uri)
         headers.each { |k, v| request[k] = v }
         request.body = JSON.generate(body)
