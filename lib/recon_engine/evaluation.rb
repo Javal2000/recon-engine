@@ -91,8 +91,19 @@ module ReconEngine
         coverage: coverage,
         recall_by_kind: recall_by_kind,
         calibration: calibration,
-        usage: report.agent_usage.to_report_h
+        usage: report.agent_usage.to_report_h,
+        clusters_detail: clusters_detail
       }
+    end
+
+    # Enough to see why a fault kind scored badly without rerunning the model.
+    def clusters_detail
+      report.clusters.map do |cluster|
+        finding = report.finding_for(cluster)
+        { id: cluster.id, type: cluster.type.to_s, signature: cluster.signature, breaks: cluster.count,
+          classification: finding&.classification, confidence: finding&.confidence,
+          degraded: finding&.degraded, explanation: finding&.explanation }
+      end
     end
 
     def to_markdown

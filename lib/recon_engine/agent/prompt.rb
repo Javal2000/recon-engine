@@ -42,9 +42,11 @@ module ReconEngine
         - ROUNDING: values differ by a precision artefact, not a value change.
         - DUPLICATE_IN_TARGET: the downstream system holds the same record more
           than once.
-        - MISSING_IN_TARGET: the record never arrived downstream.
+        - MISSING_IN_TARGET: a ledger record that never arrived in the warehouse.
+          Only for rows present upstream and absent downstream.
         - SCHEMA_DRIFT: a column changed name, type or presence between systems.
-        - GENUINE_DISCREPANCY: a real disagreement that needs a human.
+        - GENUINE_DISCREPANCY: a real disagreement that needs a human, including
+          a warehouse row with no ledger record behind it.
         - UNKNOWN: the evidence does not support any of the above.
       TEXT
 
