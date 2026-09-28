@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconciliation report</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #e3e6eb;
+    --ok: #1f8a4c; --calm: #2f6fd6; --warn: #b7791f; --bad: #c53030; --info: #7a4fd0; --neutral: #6b7280;
+    --ok-bg: #e7f5ec; --calm-bg: #e8f0fc; --warn-bg: #fbf1df; --bad-bg: #fbe9e9; --info-bg: #f0eafb; --neutral-bg: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #9aa3b2; --line: #2b313c;
+      --ok: #4cc27f; --calm: #6ea2f2; --warn: #e0a84a; --bad: #ef6b6b; --info: #a98bf0; --neutral: #9aa3b2;
+      --ok-bg: #173323; --calm-bg: #182941; --warn-bg: #3a2c14; --bad-bg: #3d1a1a; --info-bg: #2a2140; --neutral-bg: #262b34;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 26px; margin: 0; }
+  h2 { font-size: 17px; margin: 36px 0 12px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+  .status { font-weight: 600; padding: 4px 12px; border-radius: 999px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 20px; }
+  .tile, .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .tile { padding: 14px 16px; }
+  .tile .value { font-size: 24px; font-weight: 650; margin-top: 2px; }
+  .tile .label { color: var(--muted); font-size: 13px; }
+  .panel { padding: 16px; }
+  .bars { display: grid; gap: 10px; }
+  .bar-row { display: grid; grid-template-columns: 190px 1fr 190px; gap: 12px; align-items: center; }
+  .bar-row > .mono { text-align: right; }
+  .bar-track { background: var(--neutral-bg); border-radius: 6px; height: 12px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 6px; min-width: 2px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .card { padding: 16px 18px; margin-bottom: 12px; }
+  .card-head { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; align-items: baseline; }
+  .card-title { font-weight: 650; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .02em;
+           padding: 2px 9px; border-radius: 999px; }
+  .ok   { color: var(--ok);   background: var(--ok-bg); }   .bar.ok   { background: var(--ok); }
+  .calm { color: var(--calm); background: var(--calm-bg); } .bar.calm { background: var(--calm); }
+  .warn { color: var(--warn); background: var(--warn-bg); } .bar.warn { background: var(--warn); }
+  .bad  { color: var(--bad);  background: var(--bad-bg); }  .bar.bad  { background: var(--bad); }
+  .info { color: var(--info); background: var(--info-bg); } .bar.info { background: var(--info); }
+  .muted-tone { color: var(--neutral); background: var(--neutral-bg); } .bar.muted { background: var(--neutral); }
+  .finding p { margin: 8px 0; }
+  .finding ul { margin: 6px 0 8px; padding-left: 20px; color: var(--muted); }
+  .provenance { font-size: 12px; color: var(--muted); }
+  footer { margin-top: 36px; font-size: 13px; color: var(--muted); display: grid; gap: 4px; overflow-wrap: anywhere; }
+  @media (max-width: 640px) {
+    .bar-row { grid-template-columns: 1fr auto; }
+    .bar-row .bar-track { grid-column: 1 / -1; order: 3; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Reconciliation report</h1>
+      <div class="muted">recon-engine <%= h ReconEngine::VERSION %> &middot; <%= h report.started_at.strftime("%Y-%m-%d %H:%M:%S %Z") %></div>
+    </div>
+    <span class="status <%= report.clean? ? "ok" : "warn" %>"><%= h status_text %></span>
+  </header>
+
+  <section class="tiles">
+    <div class="tile"><div class="label">Row-level impact</div><div class="value"><%= h money(report.row_level_impact_cents) %></div></div>
+    <div class="tile"><div class="label">Breaks found</div><div class="value"><%= h group(report.break_count) %></div></div>
+    <div class="tile"><div class="label">Distinct causes</div><div class="value"><%= report.clusters.length %></div></div>
+    <div class="tile"><div class="label">Ledger rows matched</div><div class="value"><%= h percent(report.match_result.match_rate) %></div></div>
+    <div class="tile"><div class="label">Total mismatches explained</div><div class="value"><%= explained_count %> of <%= report.clusters.reject(&:row_level?).length %></div></div>
+  </section>
+<%- unless report.clean? -%>
+
+  <h2>Where the money is</h2>
+  <div class="panel bars">
+<%- money_buckets.each do |bucket| -%>
+    <div class="bar-row">
+      <span><span class="badge <%= tone(bucket[:label]) == "muted" ? "muted-tone" : tone(bucket[:label]) %>"><%= h bucket[:label] %></span></span>
+      <div class="bar-track"><div class="bar <%= tone(bucket[:label]) %>" style="width: <%= bucket[:width] %>%"></div></div>
+      <span class="mono"><%= h money(bucket[:magnitude_cents]) %> &middot; <%= bucket[:breaks] %> breaks</span>
+    </div>
+<%- end -%>
+  </div>
+<%- end -%>
+
+  <h2>Inputs and matching</h2>
+  <div class="panel">
+    <div class="table-wrap"><table>
+      <tr><th>Source</th><th>File</th><th class="num">Rows</th><th class="num">Total</th><th class="num">Accounts</th></tr>
+<%- [[report.inputs[0], report.ledger_profile], [report.inputs[1], report.warehouse_profile]].each do |input, profile| -%>
+      <tr>
+        <td><%= h input[:role] %></td>
+        <td class="mono"><%= h File.basename(input[:path]) %> <span class="muted"><%= h input[:digest][0, 12] %></span></td>
+        <td class="num"><%= h group(profile.row_count) %></td>
+        <td class="num"><%= h money(profile.total_cents) %></td>
+        <td class="num"><%= profile.accounts.size %></td>
+      </tr>
+<%- end -%>
+    </table></div>
+    <p class="muted">Matched <%= h group(report.match_result.matches.length) %> sets:
+      <%= h report.match_result.strategy_counts.map { |strategy, count| "#{count} by #{strategy}" }.join(", ") %>.
+      <%= report.match_result.unmatched_ledger.length %> ledger and <%= report.match_result.unmatched_warehouse.length %> warehouse rows left unmatched.</p>
+  </div>
+<%- unless report.clusters.empty? -%>
+
+  <h2>Findings, most important first</h2>
+<%- report.clusters.each_with_index do |cluster, index| -%>
+<%- finding = report.finding_for(cluster) -%>
+  <article class="card">
+    <div class="card-head">
+      <span class="card-title"><%= index + 1 %>. <%= h cluster.label %></span>
+      <span class="mono"><%= cluster.count %> break<%= "s" unless cluster.count == 1 %> &middot; <%= h money(cluster.magnitude_cents) %></span>
+    </div>
+    <div class="provenance mono"><%= h cluster.id %> &middot; <%= h signature_text(cluster) %></div>
+<%- if (attribution = cluster.attribution) -%>
+    <p><span class="badge <%= attribution.explained? ? "ok" : "warn" %>"><%= attribution.explained? ? "EXPLAINED" : "PARTLY EXPLAINED" %></span>
+      <%= attribution.explained? ? "by the row-level breaks on the same days" : "#{h attribution_value(attribution, attribution.residual)} left over on #{attribution.unexplained} day(s)" %></p>
+    <div class="table-wrap"><table>
+      <tr><th>Cause</th><th class="num">Breaks</th><th class="num"><%= attribution.measure == :cents ? "Amount" : "Rows" %></th></tr>
+<%- attribution.components.each do |component| -%>
+      <tr><td><%= h component.label %></td><td class="num"><%= component.breaks %></td><td class="num"><%= h attribution_value(attribution, component.value) %></td></tr>
+<%- end -%>
+    </table></div>
+<%- end -%>
+<%- if finding -%>
+    <div class="finding">
+      <p><span class="badge <%= finding.degraded ? "muted-tone" : (tone(finding.classification) == "muted" ? "muted-tone" : tone(finding.classification)) %>"><%= h finding.classification %></span>
+        <span class="muted">confidence <%= h finding.confidence %></span></p>
+      <p><%= h finding.explanation %></p>
+<%- unless finding.evidence.empty? -%>
+      <ul>
+<%- finding.evidence.first(3).each do |item| -%>
+        <li><%= h item %></li>
+<%- end -%>
+      </ul>
+<%- end -%>
+      <p><strong>Suggested action:</strong> <%= h finding.suggested_action %></p>
+      <div class="provenance"><%= h finding.provider %>/<%= h finding.model %> &middot; <%= finding.model_backed ? "model-backed" : "rule table, not a model" %> &middot; <%= finding.tool_calls %> tool calls<%= finding.degraded ? " &middot; degraded" : "" %></div>
+    </div>
+<%- elsif !cluster.explained? -%>
+    <p class="muted">Not investigated (agent disabled or budget reached).</p>
+<%- end -%>
+  </article>
+<%- end -%>
+<%- end -%>
+
+  <footer>
+    <div>Fingerprint <span class="mono"><%= h report.deterministic_fingerprint %></span></div>
+    <div>Agent: <%= h agent_text %><%= usage_text ? " &middot; #{h usage_text}" : "" %> &middot; took <%= format("%.2f", report.duration_seconds) %>s</div>
+  </footer>
+</main>
+</body>
+</html>

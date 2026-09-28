@@ -69,7 +69,8 @@ module ReconEngine
         warehouse_path: manifest["paths"]["warehouse"],
         config: config_from(options)
       )
-      emit(report, options.merge(json: options.fetch(:json, "out/report.json")))
+      emit(report, options.merge(json: options.fetch(:json, "out/report.json"),
+                                 html: options.fetch(:html, "out/report.html")))
     end
 
     def generate
@@ -170,6 +171,7 @@ module ReconEngine
 
         COMMON OPTIONS
           --json PATH             also write the machine-readable report
+          --html PATH             also write a self-contained HTML report
           --no-agent              deterministic layer only
           --provider NAME         offline | gemini | anthropic | openai | ollama
           --model NAME            provider-specific model id
@@ -200,6 +202,7 @@ module ReconEngine
 
     def common_options(parser, opts)
       parser.on("--json PATH", "write the JSON report to PATH") { |v| opts[:json] = v }
+      parser.on("--html PATH", "write a self-contained HTML report to PATH") { |v| opts[:html] = v }
       parser.on("--no-agent", "skip the agent layer entirely") { opts[:agent_enabled] = false }
       parser.on("--provider NAME", "LLM provider (default: offline)") { |v| opts[:agent_provider] = v.to_sym }
       parser.on("--model NAME", "model id for the provider") { |v| opts[:agent_model] = v }
@@ -226,6 +229,11 @@ module ReconEngine
       if (json_path = options[:json])
         Reporting::JsonReport.write(report, json_path)
         @stdout.puts("JSON report written to #{json_path}")
+      end
+
+      if (html_path = options[:html])
+        Reporting::HtmlReport.write(report, html_path)
+        @stdout.puts("HTML report written to #{html_path}")
       end
 
       report.clean? ? EXIT_CLEAN : EXIT_BREAKS

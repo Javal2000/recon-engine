@@ -51,6 +51,14 @@ RSpec.describe ReconEngine::CLI do
     expect(JSON.parse(File.read(path))).to include("run", "summary", "clusters", "breaks")
   end
 
+  it "writes the HTML report when asked" do
+    path = File.join(dir, "out", "report.html")
+    reconcile(manifest["paths"]["ledger"], manifest["paths"]["warehouse"], "--html", path)
+
+    expect(File.read(path)).to include("Reconciliation report")
+    expect(stdout.string).to include("HTML report written to #{path}")
+  end
+
   it "prints the human report unless --quiet" do
     cli("run", "--ledger", manifest["paths"]["ledger"], "--warehouse", manifest["paths"]["warehouse"], "--no-agent")
 

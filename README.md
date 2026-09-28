@@ -11,6 +11,10 @@ git clone https://github.com/Javal2000/recon-engine && cd recon-engine
 bin/recon demo
 ```
 
+The demo prints a text report and also writes `out/report.json` and a self-contained `out/report.html`:
+
+![The HTML report for the demo data](docs/report.png)
+
 The demo needs no API key, no database and no `bundle install`. The engine only uses Ruby's standard library, and the agent layer falls back to an offline rule table when no model is configured. On Windows, run the commands as `ruby bin/recon ...`.
 
 ## Design
@@ -196,6 +200,7 @@ bin/recon eval --provider gemini
 | `--provider NAME` | `offline` | `offline`, `gemini`, `anthropic`, `openai`, `ollama` |
 | `--max-clusters N` | 40 | clusters the agent investigates per run |
 | `--json PATH` | | also write the JSON report |
+| `--html PATH` | | also write a self-contained HTML report (no scripts, nothing fetched) |
 | `--no-agent` | | skip the agent layer |
 | `--quiet` | | don't print the text report |
 
