@@ -7,19 +7,26 @@ module ReconEngine
   # and produce the same fingerprint on every rerun (see spec/run_spec.rb).
   # Investigation is not, which is why it runs last, cannot influence the earlier
   # phases, is bounded, and degrades one cluster rather than the run.
+  #
+  # With db: the run is also recorded in a history database and compared with
+  # the previous one. That is kept out of Config on purpose: where history is
+  # stored has no bearing on what the data says, so it stays out of the
+  # fingerprint.
   class Run
-    def self.call(ledger_path:, warehouse_path:, config: Config.build)
+    def self.call(ledger_path:, warehouse_path:, config: Config.build, db: nil)
       new(
         ledger: Sources::CsvSource.new(ledger_path, name: :ledger),
         warehouse: Sources::CsvSource.new(warehouse_path, name: :warehouse),
-        config: config
+        config: config,
+        db: db
       ).call
     end
 
-    def initialize(ledger:, warehouse:, config:)
+    def initialize(ledger:, warehouse:, config:, db: nil)
       @ledger    = ledger
       @warehouse = warehouse
       @config    = config
+      @db        = db
     end
 
     def call
@@ -47,9 +54,8 @@ module ReconEngine
 
       breaks   = run_checks(context)
       clusters = Breaks::Attribution.new(breaks, context).annotate(Breaks::Clusterer.call(breaks))
-      findings = investigate(clusters, context, breaks)
 
-      Reporting::Report.new(
+      report = Reporting::Report.new(
         config: @config,
         inputs: input_descriptors(ledger_profile, warehouse_profile),
         ledger_profile: ledger_profile,
@@ -57,13 +63,21 @@ module ReconEngine
         match_result: match_result,
         breaks: breaks,
         clusters: clusters,
-        findings: findings,
+        findings: investigate(clusters, context, breaks),
         started_at: started_at,
         duration_seconds: Process.clock_gettime(Process::CLOCK_MONOTONIC) - clock
       )
+      @db ? record_history(report, context) : report
     end
 
     private
+
+    # After the report is built, because the database keys each run by its
+    # fingerprint.
+    def record_history(report, context)
+      keys = History::Identity.keys_for(report.breaks, context)
+      report.with(history: History.record(report, keys, path: @db))
+    end
 
     # Sorted by content-addressed id, so neither registration order nor hash
     # iteration order can reach the report.

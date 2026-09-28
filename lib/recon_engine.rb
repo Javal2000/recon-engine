@@ -32,6 +32,10 @@ module ReconEngine
   # pointless.
   class QuotaExhausted < ProviderError
   end
+
+  # Raised when the run-history database can't be opened or written.
+  class HistoryError < Error
+  end
 end
 
 require "recon_engine/version"
@@ -66,12 +70,17 @@ require "recon_engine/agent/tools"
 require "recon_engine/agent/prompt"
 require "recon_engine/agent/finding"
 require "recon_engine/agent/investigator"
+require "recon_engine/history/identity"
+require "recon_engine/history/summary"
+require "recon_engine/history/store"
 require "recon_engine/reporting/report"
 require "recon_engine/reporting/terminal_text"
+require "recon_engine/reporting/cli_history"
 require "recon_engine/reporting/cli_report"
 require "recon_engine/reporting/json_report"
 require "recon_engine/reporting/html_report"
 require "recon_engine/generator"
+require "recon_engine/generator/next_day"
 require "recon_engine/evaluation"
 require "recon_engine/run"
 require "recon_engine/cli"

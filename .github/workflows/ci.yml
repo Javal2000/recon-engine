@@ -61,6 +61,13 @@ jobs:
           fi
           test -s "$RUNNER_TEMP/report.json"
 
+      # Two consecutive days into one SQLite file, so the sqlite3 gem gets
+      # loaded on every Ruby in the matrix and day two is compared with day one.
+      - name: Run history (two days, one database)
+        run: |
+          bundle exec rake demo:history > "$RUNNER_TEMP/history.txt"
+          grep "History: recorded as run 2" "$RUNNER_TEMP/history.txt"
+
       - name: Idempotency (the same bytes must produce the same fingerprint)
         run: |
           bundle exec ruby bin/recon generate --dir "$RUNNER_TEMP/idem" --seed 42 --rows 500 >/dev/null

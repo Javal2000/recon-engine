@@ -7,6 +7,7 @@ module ReconEngine
     # are summarised.
     class CliReport
       include TerminalText
+      include CliHistory
 
       def initialize(report, color: $stdout.tty?, unicode: TerminalText.unicode_terminal?)
         @report = report
@@ -20,6 +21,7 @@ module ReconEngine
           sources_section,
           matching_section,
           summary_section,
+          history_section,
           clusters_section,
           footer
         ]
@@ -118,6 +120,9 @@ module ReconEngine
                    "#{position}. #{cluster.label} #{dash} #{cluster.count} break(s), " \
                    "#{Money.humanize(cluster.magnitude_cents)}",
                    colorize("   #{cluster.id} #{sep} #{signature_text(cluster)}", :grey)]
+        if (age = report.history&.age_text(cluster))
+          lines << colorize("   #{age}", age.start_with?("new") ? :yellow : :grey)
+        end
         lines.concat(attribution_lines(cluster.attribution)) if cluster.attribution
         return lines + finding_lines(finding) if finding
         return lines if cluster.explained?

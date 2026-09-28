@@ -57,6 +57,7 @@
   .finding p { margin: 8px 0; }
   .finding ul { margin: 6px 0 8px; padding-left: 20px; color: var(--muted); }
   .provenance { font-size: 12px; color: var(--muted); }
+  .note { margin-top: 0; overflow-wrap: anywhere; }
   footer { margin-top: 36px; font-size: 13px; color: var(--muted); display: grid; gap: 4px; overflow-wrap: anywhere; }
   @media (max-width: 640px) {
     .bar-row { grid-template-columns: 1fr auto; }
@@ -94,6 +95,29 @@
 <%- end -%>
   </div>
 <%- end -%>
+<%- if (history = report.history) -%>
+
+  <h2>Run history</h2>
+  <div class="panel">
+    <p class="note"><%= h history_note(history) %></p>
+<%- unless history.first_run? -%>
+    <div class="table-wrap"><table>
+      <tr><th>Since run <%= history.previous.number %></th><th class="num">Breaks</th><th class="num">Row-level</th><th></th></tr>
+<%- history_rows(history).each do |label, badge, entries, note| -%>
+      <tr>
+        <td><span class="badge <%= badge %>"><%= label %></span></td>
+        <td class="num"><%= entries.length %></td>
+        <td class="num"><%= h money(history.row_level_cents(entries)) %></td>
+        <td class="muted"><%= h note %></td>
+      </tr>
+<%- end -%>
+    </table></div>
+<%- history.schema_changes.each do |change| -%>
+    <p><span class="badge info">SCHEMA</span> <%= h change.describe %></p>
+<%- end -%>
+<%- end -%>
+  </div>
+<%- end -%>
 
   <h2>Inputs and matching</h2>
   <div class="panel">
@@ -124,6 +148,9 @@
       <span class="mono"><%= cluster.count %> break<%= "s" unless cluster.count == 1 %> &middot; <%= h money(cluster.magnitude_cents) %></span>
     </div>
     <div class="provenance mono"><%= h cluster.id %> &middot; <%= h signature_text(cluster) %></div>
+<%- if (age = report.history&.age_text(cluster)) -%>
+    <p><span class="badge <%= age.start_with?("new") ? "warn" : "muted-tone" %>"><%= h age %></span></p>
+<%- end -%>
 <%- if (attribution = cluster.attribution) -%>
     <p><span class="badge <%= attribution.explained? ? "ok" : "warn" %>"><%= attribution.explained? ? "EXPLAINED" : "PARTLY EXPLAINED" %></span>
       <%= attribution.explained? ? "by the row-level breaks on the same days" : "#{h attribution_value(attribution, attribution.residual)} left over on #{attribution.unexplained} day(s)" %></p>

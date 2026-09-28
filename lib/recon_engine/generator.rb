@@ -40,40 +40,59 @@ module ReconEngine
       composite_only: "should match via composite key, not produce a break"
     }.freeze
 
+    # first_id numbers the transactions, so a second generated day can carry
+    # on from where the first one stopped (see NextDay).
     def initialize(seed: 42, rows: 2000, accounts: 10, days: 10,
-                   start_date: Date.new(2026, 1, 5), faults: {})
+                   start_date: Date.new(2026, 1, 5), faults: {}, first_id: 1)
       @seed       = seed
       @rows       = rows
       @accounts   = accounts
       @days       = days
       @start_date = start_date
       @faults     = DEFAULT_FAULTS.merge(faults)
+      @first_id   = first_id
       @rng        = Random.new(seed)
     end
 
     attr_reader :seed
 
+    # Writes the two CSVs and the manifest, and returns the manifest with
+    # their paths added.
+    def self.write_files(dir, ledger, warehouse, manifest)
+      FileUtils.mkdir_p(dir)
+      paths = { "ledger" => "ledger.csv", "warehouse" => "warehouse.csv", "manifest" => "manifest.json" }
+              .transform_values { |name| File.join(dir, name) }
+
+      write_csv(paths["ledger"], ledger)
+      write_csv(paths["warehouse"], warehouse)
+      File.write(paths["manifest"], "#{JSON.pretty_generate(manifest)}\n")
+      manifest.merge("paths" => paths)
+    end
+
+    # Any column the rows carry beyond the usual six (the next day's batch_id)
+    # goes after them.
+    def self.write_csv(path, rows)
+      headers = HEADERS | rows.first.to_h.keys
+      CSV.open(path, "w", write_headers: true, headers: headers) do |csv|
+        rows.each { |row| csv << headers.map { |h| row[h] } }
+      end
+      path
+    end
+
     # Writes ledger.csv, warehouse.csv and manifest.json into dir.
     # @return [Hash] the manifest
     def write(dir)
-      FileUtils.mkdir_p(dir)
-      ledger, warehouse, manifest = build
-
-      write_csv(File.join(dir, "ledger.csv"), ledger)
-      write_csv(File.join(dir, "warehouse.csv"), warehouse)
-      File.write(File.join(dir, "manifest.json"), "#{JSON.pretty_generate(manifest)}\n")
-
-      manifest.merge(
-        "paths" => {
-          "ledger" => File.join(dir, "ledger.csv"),
-          "warehouse" => File.join(dir, "warehouse.csv"),
-          "manifest" => File.join(dir, "manifest.json")
-        }
-      )
+      self.class.write_files(dir, *build)
     end
 
+    # The same books a day later, for trying out run history (--db).
+    def write_next_day(dir) = NextDay.new(self).write(dir)
+
+    # Rebuilt from the seed every time, so #write and #write_next_day on one
+    # instance start from the same day one.
     # @return [Array(Array<Hash>, Array<Hash>, Hash)]
     def build
+      @rng   = Random.new(@seed)
       ledger = Array.new(@rows) { |i| ledger_row(i) }
       assignments = assign_faults
       warehouse, injected = derive_warehouse(ledger, assignments)
@@ -89,7 +108,7 @@ module ReconEngine
     def ledger_row(index)
       date = @start_date + @rng.rand(@days)
       {
-        "txn_id" => format("TXN-%06d", index + 1),
+        "txn_id" => format("TXN-%06d", @first_id + index),
         "account_id" => format("ACC-%04d", @rng.rand(@accounts) + 1),
         "posted_date" => date.iso8601,
         "amount" => Money.format(random_cents),
@@ -223,13 +242,6 @@ module ReconEngine
                                       .tally.sort.to_h,
         "faults" => injected.sort_by { |f| [f["kind"], f["txn_id"]] }
       }
-    end
-
-    def write_csv(path, rows)
-      CSV.open(path, "w", write_headers: true, headers: HEADERS) do |csv|
-        rows.each { |row| csv << HEADERS.map { |h| row[h] } }
-      end
-      path
     end
   end
 end

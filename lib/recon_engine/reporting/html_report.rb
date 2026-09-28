@@ -77,6 +77,33 @@ module ReconEngine
         "#{format("%+d", value)} row#{"s" unless value.abs == 1}"
       end
 
+      # Only the file name: the page may be attached to a ticket, and the
+      # directory it came from is nobody else's business.
+      def history_note(history)
+        where = "Run #{history.run.number} in #{File.basename(history.database)}"
+        return "#{where}, the first one there. Every break starts ageing from here." if history.first_run?
+
+        previous = history.previous
+        notes = ["#{where}, compared with run #{previous.number} from " \
+                 "#{Time.iso8601(previous.started_at).strftime("%Y-%m-%d %H:%M %Z")}."]
+        if history.rerun?
+          notes << "Same inputs, settings and breaks as run #{history.run.number}, so it was not recorded again."
+        end
+        notes << "The settings changed since then, so some of the difference may come from them." if
+          history.settings_changed?
+        notes.join(" ")
+      end
+
+      def history_rows(history)
+        oldest = history.oldest
+        [
+          ["NEW", "warn", history.opened, nil],
+          ["STILL OPEN", "muted-tone", history.still_open,
+           oldest && "oldest open since run #{oldest.first_seen_run} (#{oldest.first_seen_at[0, 10]})"],
+          ["RESOLVED", "ok", history.resolved, history.resolved_text]
+        ]
+      end
+
       def usage_text
         usage = report.agent_usage
         return nil unless usage.calls.positive?

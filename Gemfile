@@ -17,6 +17,10 @@ group :development, :test do
   gem "rubocop-rake", require: false
   gem "rubocop-rspec", require: false
 
+  # Only needed for --db (run history). The engine loads it on demand, so a
+  # plain `ruby bin/recon demo` still runs on the standard library alone.
+  gem "sqlite3", require: false
+
   # Newer releases of these two need Ruby 3.3, and CI still runs 3.2.
   gem "parallel", "< 2", require: false
   gem "simplecov", "< 1", require: false

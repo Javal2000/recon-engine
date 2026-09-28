@@ -7,9 +7,9 @@ if ENV["COVERAGE"]
   SimpleCov.start do
     add_filter "/spec/"
     enable_coverage :branch
-    # A little under the measured 95.6% / 79.8%, so it catches a regression
+    # A little under the measured 96.6% / 83.4%, so it catches a regression
     # without failing on the small differences between Ruby versions.
-    minimum_coverage line: 94, branch: 77
+    minimum_coverage line: 95, branch: 80
   end
 end
 

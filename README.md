@@ -15,7 +15,7 @@ The demo prints a text report and also writes `out/report.json` and a self-conta
 
 ![The HTML report for the demo data](docs/report.png)
 
-The demo needs no API key, no database and no `bundle install`. The engine only uses Ruby's standard library, and the agent layer falls back to an offline rule table when no model is configured. On Windows, run the commands as `ruby bin/recon ...`.
+The demo needs no API key, no database and no `bundle install`. The engine only uses Ruby's standard library, and the agent layer falls back to an offline rule table when no model is configured. The one optional extra is run history (`--db`), which needs the `sqlite3` gem that `bundle install` brings in. On Windows, run the commands as `ruby bin/recon ...`.
 
 ## Design
 
@@ -41,10 +41,10 @@ The model is kept away from the arithmetic in three ways:
 ## How a run works
 
 ```
-ledger.csv ─┐
-            ├─► profile ─► match ─► check ─► cluster ─► attribute ─┬─► CLI report
-warehouse.csv┘                                                     │   JSON report
-                                                                   └─► agent
+ledger.csv ───┐
+              ├─► profile ─► match ─► check ─► cluster ─► attribute ─┬─► agent
+warehouse.csv ┘                                                      ├─► history (--db)
+                                                                     └─► text, JSON and HTML reports
 ```
 
 **Profile.** One streaming pass per file with `CSV.foreach`. Control totals, row counts and duplicate detection only need counters, so memory grows with the number of distinct keys, not rows.
@@ -112,6 +112,43 @@ Its reply has to match a hand-written schema. If it doesn't, the specific errors
 ```
 
 Classifications are `TIMING_DIFFERENCE`, `ROUNDING`, `DUPLICATE_IN_TARGET`, `MISSING_IN_TARGET`, `SCHEMA_DRIFT`, `GENUINE_DISCREPANCY` and `UNKNOWN`. Every finding records the provider, the model, whether it was model-backed, how many tool calls and repairs it took, and whether it degraded.
+
+## Run history
+
+Reconciliation runs every day, and after the first day the useful question changes from "what's broken" to "what's new, what has been broken since Monday, and did yesterday's fix fix anything". `--db PATH` records every run in a SQLite file and compares each one with the run before:
+
+```bash
+bin/recon demo --db out/history.sqlite3               # day one
+bin/recon demo --next-day --db out/history.sqlite3    # the same books a day later
+```
+
+`rake demo:history` runs both. For the second day the generator removes the replayed rows, backfills half the dropped ones, adds a day of new activity with three rows that never arrive, and has the warehouse start sending a `batch_id` column. The report gains a section:
+
+```
+HISTORY
+  run 2 in out/history.sqlite3, compared with run 1 (2026-09-28 02:07 UTC)
+
+  new              7 breaks      $13,332.81
+  still open     114 breaks      $64,661.32  oldest open since run 1 (2026-09-28)
+  resolved        21 breaks      $83,043.50
+              9 Duplicate business key, 7 Missing in warehouse, 3 Control
+              total does not tie, 2 Row count does not tie
+  schema changed  warehouse: column "batch_id" added (string)
+```
+
+Every finding also says how old it is: "new this run", "open since run 1 (2 runs)", or both when a cluster mixes the two. The JSON report carries the same data, per break and per cluster.
+
+**Stable keys.** Break ids can't follow a break from one day to the next, because they hash the break's content, row numbers and amounts included. On day two, 82 of the 114 breaks still open have a new id: every value mismatch and orphan because the warehouse file arrived in a different order, and some daily totals because their amounts moved. So history keys each break by what it's about: the transaction's business key for row-level breaks, the day and currency for control totals and row counts, the column for schema drift. A value mismatch keeps its key when the values change, so fixing a pair's status while its amount is still wrong doesn't count as resolved.
+
+**Ageing.** Each break carries the run where its current streak began. One that goes away and comes back starts again from zero.
+
+**Reruns.** A run with the same fingerprint as the latest one isn't recorded again, so retrying a job doesn't make every open break a run older.
+
+**Offsetting errors.** One of the seven new breaks is a row count on an old day, 2026-01-08. On day one that day's errors happened to cancel out in the count. Removing the replay and backfilling the drops fixed some of them, and the rest now show. From the count's point of view that really is new, and history reports it that way.
+
+**Schema over time.** The schema drift check compares the two files with each other. History also compares each file with itself a run ago, so a column added to both at once still gets noticed.
+
+Where history is stored has no bearing on what the data says, so `--db` stays out of the settings and the fingerprint. The engine only loads `sqlite3` when `--db` is used.
 
 ## Testing the agent
 
@@ -190,6 +227,7 @@ bin/recon demo
 bin/recon generate --dir data --seed 42 --rows 5000
 bin/recon run --ledger data/ledger.csv --warehouse data/warehouse.csv --json out/report.json
 bin/recon run --ledger a.csv --warehouse b.csv --no-agent
+bin/recon run --ledger a.csv --warehouse b.csv --db out/history.sqlite3
 bin/recon eval --provider gemini
 ```
 
@@ -201,6 +239,8 @@ bin/recon eval --provider gemini
 | `--max-clusters N` | 40 | clusters the agent investigates per run |
 | `--json PATH` | | also write the JSON report |
 | `--html PATH` | | also write a self-contained HTML report (no scripts, nothing fetched) |
+| `--db PATH` | | record the run in a SQLite history file and compare it with the last one |
+| `--next-day` | | `demo` only: reconcile the same books a day later |
 | `--no-agent` | | skip the agent layer |
 | `--quiet` | | don't print the text report |
 
@@ -232,29 +272,30 @@ That's about 1.1 KB of heap per ledger row, counting its warehouse counterpart. 
 
 **Failures.** The agent runs last, so an outage, bad JSON or a failing tool only degrades that cluster's explanation. Malformed input is the opposite: the run stops and names the row and column, because skipping bad rows would produce a clean report over incomplete data. `rescue` clauses only catch the library's own error classes, so real bugs still raise.
 
-**Synthetic data.** All data comes from `lib/recon_engine/generator.rb`. It's seeded, so the same seed gives byte-identical files, and it shuffles the warehouse file so the matcher can't rely on row order.
+**Synthetic data.** All data comes from `lib/recon_engine/generator.rb`. It's seeded, so the same seed gives byte-identical files, and it shuffles the warehouse file so the matcher can't rely on row order. The next day's files are built from the same seed, so they're reproducible too.
 
 ## What I'd add next
 
 - An on-disk sort-merge join and partition-parallel runs, since reconciliation splits cleanly by date and account.
-- A `breaks` table keyed on the break ids, for break ageing ("open for nine days") and schema drift across runs.
+- Reusing a finding while its cluster is unchanged. History already knows which breaks are still open, so a cluster with no new breaks doesn't need to go back to the model.
 - A per-run token budget. Usage is already tracked per finding, and a circuit breaker stops calling a provider that's out of quota; a ceiling on tokens is the missing piece.
+- Alerts driven by history: page on new breaks and on anything open longer than a set number of runs, and stay quiet on a rerun.
 - Periodic human review of agent findings, feeding back into the golden set.
-- Skipping notifications when a run's fingerprint matches the previous one.
 
 ## Development
 
 ```bash
 bundle install
 rake spec             # unit and integration specs, model mocked, no network
-COVERAGE=1 rake spec  # the same, failing below 94% line or 77% branch coverage
+COVERAGE=1 rake spec  # the same, failing below 95% line or 80% branch coverage
 rake eval             # golden-set evaluation against the configured provider
 rake bench            # timing and memory (BENCH_ROWS=10000,100000 by default)
 rake demo             # generate and reconcile
+rake demo:history     # two days into one history file
 bundle exec rubocop
 ```
 
-CI runs RuboCop once, and on each of Ruby 3.2, 3.3 and 3.4 the coverage-checked specs, the eval and an end-to-end demo. Coverage is currently 95.6% of lines and 79.8% of branches.
+CI runs RuboCop once, and on each of Ruby 3.2, 3.3 and 3.4 the coverage-checked specs, the eval and an end-to-end demo. Coverage is currently 96.6% of lines and 83.4% of branches.
 
 ```
 lib/recon_engine/
@@ -264,11 +305,12 @@ lib/recon_engine/
 ├── sources/          CSV source and streaming profiler
 ├── matching/         three-pass matcher
 ├── checks/           the five checks
-├── breaks/           break records and clustering
+├── breaks/           break records, clustering and attribution
 ├── agent/            schema, tools, prompt and the loop
 ├── llm/              provider adapters and the offline stand-in
-├── reporting/        CLI and JSON reports
-├── generator.rb      synthetic data and fault manifest
+├── history/          stable break keys, the SQLite store, run comparison
+├── reporting/        text, JSON and HTML reports
+├── generator.rb      synthetic data and fault manifest (generator/ has the next day)
 ├── evaluation.rb     scores the agent against the manifest
 └── run.rb            orchestration
 ```

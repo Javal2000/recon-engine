@@ -21,11 +21,17 @@ module ReconEngine
           matching: report.match_result.to_report_h,
           summary: summary_section(report),
           agent: agent_section(report),
-          clusters: report.clusters.map do |cluster|
-            cluster.to_report_h.merge(finding: report.finding_for(cluster)&.to_report_h)
-          end,
+          history: report.history&.to_report_h,
+          clusters: report.clusters.map { |cluster| cluster_section(report, cluster) },
           breaks: report.breaks.map(&:to_report_h)
         }
+      end
+
+      # With --db, each cluster also says how many of its breaks are new and
+      # since when the rest have been open.
+      def cluster_section(report, cluster)
+        section = cluster.to_report_h.merge(finding: report.finding_for(cluster)&.to_report_h)
+        report.history ? section.merge(history: report.history.cluster_age(cluster)) : section
       end
 
       def run_section(report)

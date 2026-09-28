@@ -55,22 +55,35 @@ module ReconEngine
         parser.on("--dir DIR", "where to write generated data (default: data/)") { |v| opts[:dir] = v }
         parser.on("--seed N", Integer, "generator seed (default: 42)") { |v| opts[:seed] = v }
         parser.on("--rows N", Integer, "ledger rows to generate (default: 2000)") { |v| opts[:rows] = v }
+        parser.on("--next-day", "the same books a day later, to compare with --db") { opts[:next_day] = true }
       end
-      dir = options.fetch(:dir, "data")
-
-      manifest = Generator.new(seed: options.fetch(:seed, 42), rows: options.fetch(:rows, 2000)).write(dir)
-      @stdout.puts("generated #{manifest["generator"]["ledger_rows"]} ledger rows and " \
-                   "#{manifest["generator"]["warehouse_rows"]} warehouse rows in #{dir}/")
-      @stdout.puts("injected faults: #{manifest["fault_counts"].map { |k, v| "#{k}=#{v}" }.join(", ")}")
-      @stdout.puts
+      dir       = options.fetch(:dir, "data")
+      generator = Generator.new(seed: options.fetch(:seed, 42), rows: options.fetch(:rows, 2000))
+      manifest  = options[:next_day] ? generator.write_next_day(dir) : generator.write(dir)
+      describe_demo_data(manifest, dir)
 
       report = Run.call(
         ledger_path: manifest["paths"]["ledger"],
         warehouse_path: manifest["paths"]["warehouse"],
-        config: config_from(options)
+        config: config_from(options),
+        db: options[:db]
       )
       emit(report, options.merge(json: options.fetch(:json, "out/report.json"),
                                  html: options.fetch(:html, "out/report.html")))
+    end
+
+    def describe_demo_data(manifest, dir)
+      @stdout.puts("generated #{manifest["generator"]["ledger_rows"]} ledger rows and " \
+                   "#{manifest["generator"]["warehouse_rows"]} warehouse rows in #{dir}/")
+      if (changes = manifest["changes"])
+        @stdout.puts("overnight: #{changes["replays_removed"]} replayed rows removed, " \
+                     "#{changes["backfilled"].length} dropped rows backfilled, #{changes["new_rows"]} new rows " \
+                     "for #{changes["new_day"]} (#{changes["new_missing"].length} never arrived), " \
+                     "and the warehouse added #{changes["warehouse_columns_added"].join(", ")}")
+      else
+        @stdout.puts("injected faults: #{manifest["fault_counts"].map { |k, v| "#{k}=#{v}" }.join(", ")}")
+      end
+      @stdout.puts
     end
 
     def generate
@@ -103,7 +116,7 @@ module ReconEngine
       ledger    = options[:ledger]    || raise(InputError, "--ledger is required")
       warehouse = options[:warehouse] || raise(InputError, "--warehouse is required")
 
-      report = Run.call(ledger_path: ledger, warehouse_path: warehouse, config: config_from(options))
+      report = Run.call(ledger_path: ledger, warehouse_path: warehouse, config: config_from(options), db: options[:db])
       emit(report, options)
     end
 
@@ -123,32 +136,10 @@ module ReconEngine
         Evaluation.new(manifest: manifest, report: report)
       end
 
-      print_evaluation(evaluation)
+      @stdout.puts(evaluation.to_text)
       write_file(options[:json], JSON.pretty_generate(evaluation.to_h)) if options[:json]
-      if options[:markdown]
-        write_file(options[:markdown], "#{evaluation.to_markdown}
-")
-      end
+      write_file(options[:markdown], "#{evaluation.to_markdown}\n") if options[:markdown]
       EXIT_CLEAN
-    end
-
-    def print_evaluation(evaluation)
-      summary = evaluation.to_h
-      usage   = summary[:usage]
-      @stdout.puts("provider #{summary[:provider]} #{summary[:models].join(", ")}, " \
-                   "#{summary[:clusters_investigated]}/#{summary[:clusters]} clusters investigated")
-      @stdout.puts
-      @stdout.puts(evaluation.to_markdown)
-      @stdout.puts
-      @stdout.puts("coverage #{(summary[:coverage] * 100).round}% of scored breaks got a non-degraded answer")
-      if (ece = summary[:calibration][:expected_calibration_error])
-        @stdout.puts("calibration error #{ece}")
-      end
-      return unless usage[:calls].positive?
-
-      seconds = (usage[:latency_ms] / 1000.0).round(1)
-      @stdout.puts("#{usage[:calls]} model calls, #{usage[:total_tokens]} tokens " \
-                   "(#{usage[:thinking_tokens]} thinking), #{seconds}s in the model")
     end
 
     def write_file(path, content)
@@ -164,6 +155,7 @@ module ReconEngine
 
         USAGE
           bin/recon demo                            generate synthetic data and reconcile it
+          bin/recon demo --next-day --db FILE       the same books a day later, compared with the last run
           bin/recon generate --dir data             write synthetic data with injected faults
           bin/recon run --ledger A --warehouse B    reconcile two CSVs
           bin/recon eval --provider gemini          score the agent against a generated answer key
@@ -172,6 +164,7 @@ module ReconEngine
         COMMON OPTIONS
           --json PATH             also write the machine-readable report
           --html PATH             also write a self-contained HTML report
+          --db PATH               keep run history in a SQLite file and compare with the last run
           --no-agent              deterministic layer only
           --provider NAME         offline | gemini | anthropic | openai | ollama
           --model NAME            provider-specific model id
@@ -203,6 +196,7 @@ module ReconEngine
     def common_options(parser, opts)
       parser.on("--json PATH", "write the JSON report to PATH") { |v| opts[:json] = v }
       parser.on("--html PATH", "write a self-contained HTML report to PATH") { |v| opts[:html] = v }
+      parser.on("--db PATH", "record the run in a SQLite history file") { |v| opts[:db] = v }
       parser.on("--no-agent", "skip the agent layer entirely") { opts[:agent_enabled] = false }
       parser.on("--provider NAME", "LLM provider (default: offline)") { |v| opts[:agent_provider] = v.to_sym }
       parser.on("--model NAME", "model id for the provider") { |v| opts[:agent_model] = v }
@@ -234,6 +228,14 @@ module ReconEngine
       if (html_path = options[:html])
         Reporting::HtmlReport.write(report, html_path)
         @stdout.puts("HTML report written to #{html_path}")
+      end
+
+      if (history = report.history)
+        @stdout.puts(if history.rerun?
+                       "History unchanged: same as run #{history.run.number} in #{history.database}"
+                     else
+                       "History: recorded as run #{history.run.number} in #{history.database}"
+                     end)
       end
 
       report.clean? ? EXIT_CLEAN : EXIT_BREAKS

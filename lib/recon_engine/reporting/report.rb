@@ -9,11 +9,14 @@ module ReconEngine
     # findings. Two runs over the same bytes share a fingerprint even when a real
     # model wrote different explanations for them.
     class Report
-      attr_reader :config, :inputs, :ledger_profile, :warehouse_profile,
-                  :match_result, :breaks, :clusters, :findings, :started_at, :duration_seconds
+      FIELDS = %i[config inputs ledger_profile warehouse_profile match_result breaks clusters
+                  findings started_at duration_seconds history].freeze
 
+      attr_reader(*FIELDS)
+
+      # history is a History::Summary when the run was recorded with --db.
       def initialize(config:, inputs:, ledger_profile:, warehouse_profile:, match_result:,
-                     breaks:, clusters:, findings:, started_at:, duration_seconds:)
+                     breaks:, clusters:, findings:, started_at:, duration_seconds:, history: nil)
         @config            = config
         @inputs            = inputs
         @ledger_profile    = ledger_profile
@@ -24,6 +27,12 @@ module ReconEngine
         @findings          = findings
         @started_at        = started_at
         @duration_seconds  = duration_seconds
+        @history           = history
+      end
+
+      # A copy with some fields replaced, like Data#with.
+      def with(**changes)
+        self.class.new(**FIELDS.to_h { |name| [name, public_send(name)] }, **changes)
       end
 
       def findings_by_cluster

@@ -71,6 +71,38 @@ RSpec.describe ReconEngine::Generator do
     end
   end
 
+  describe "the next day" do
+    let(:generator) { described_class.new(seed: 9, rows: 300) }
+
+    def read(path) = ReconEngine::Sources::CsvSource.new(path, name: :ledger)
+
+    it "is reproducible, and building it does not disturb day one" do
+      day_one = generator.write(File.join(dir, "a"))
+      generator.write_next_day(File.join(dir, "next-a"))
+      again = generator.write(File.join(dir, "b"))
+      next_day = described_class.new(seed: 9, rows: 300).write_next_day(File.join(dir, "next-b"))
+
+      expect(File.read(again["paths"]["warehouse"])).to eq(File.read(day_one["paths"]["warehouse"]))
+      expect(File.read(next_day["paths"]["warehouse"])).to eq(File.read(File.join(dir, "next-a", "warehouse.csv")))
+    end
+
+    it "adds a day of new transactions numbered on from the first" do
+      manifest = generator.write_next_day(dir)
+      ids      = read(manifest["paths"]["ledger"]).map(&:txn_id)
+
+      expect(ids.length).to eq(300 + manifest["changes"]["new_rows"])
+      expect(ids.uniq.length).to eq(ids.length)
+      expect(manifest["changes"]["new_missing"]).to all(be > "TXN-000300")
+    end
+
+    it "sends the extra warehouse column" do
+      manifest = generator.write_next_day(dir)
+
+      expect(read(manifest["paths"]["warehouse"]).headers.last).to eq("batch_id")
+      expect(read(manifest["paths"]["ledger"]).headers).not_to include("batch_id")
+    end
+  end
+
   it "generates only ids in the generator's own format" do
     manifest = described_class.new(seed: 42, rows: 100).write(dir)
     ids = ReconEngine::Sources::CsvSource

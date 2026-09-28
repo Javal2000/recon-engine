@@ -116,6 +116,23 @@ module ReconEngine
       lines.join("\n")
     end
 
+    # What `recon eval` prints.
+    def to_text
+      summary = to_h
+      usage   = summary[:usage]
+      ece     = summary[:calibration][:expected_calibration_error]
+      lines   = ["provider #{summary[:provider]} #{summary[:models].join(", ")}, " \
+                 "#{summary[:clusters_investigated]}/#{summary[:clusters]} clusters investigated",
+                 "", to_markdown, "",
+                 "coverage #{percent(summary[:coverage])} of scored breaks got a non-degraded answer"]
+      lines << "calibration error #{ece}" if ece
+      if usage[:calls].positive?
+        lines << "#{usage[:calls]} model calls, #{usage[:total_tokens]} tokens " \
+                 "(#{usage[:thinking_tokens]} thinking), #{(usage[:latency_ms] / 1000.0).round(1)}s in the model"
+      end
+      lines.join("\n")
+    end
+
     private
 
     def expected_classification(kind)

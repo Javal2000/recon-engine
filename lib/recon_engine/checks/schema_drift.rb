@@ -7,8 +7,9 @@ module ReconEngine
     # column that changed type gets flagged before any bad values come through.
     #
     # Detects a column missing downstream, a column added downstream, and a
-    # column whose type changed. Drift between this run and a previous one would
-    # need persisted run history, which v1 does not keep.
+    # column whose type changed. Drift in one file between this run and the
+    # last is History's job (--db), which also catches a change made to both
+    # files at once.
     class SchemaDrift < Base
       def call(context)
         ledger    = context.ledger_profile.schema

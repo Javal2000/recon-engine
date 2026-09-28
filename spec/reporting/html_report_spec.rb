@@ -50,6 +50,18 @@ RSpec.describe ReconEngine::Reporting::HtmlReport do
     expect(html_for(clean)).to include("Reconciled clean")
   end
 
+  it "shows the run history and each cause's age, naming only the database file" do
+    db    = File.join(dir, "private", "history.sqlite3")
+    paths = ->(m) { { ledger_path: m["paths"]["ledger"], warehouse_path: m["paths"]["warehouse"], db: db } }
+    generator = ReconEngine::Generator.new(seed: 11, rows: 300)
+    ReconEngine::Run.call(**paths.call(generator.write(File.join(dir, "day1"))))
+    html = html_for(ReconEngine::Run.call(**paths.call(generator.write_next_day(File.join(dir, "day2")))))
+
+    expect(html).to include("Run history", "Run 2 in history.sqlite3", "STILL OPEN", "RESOLVED", "new this run")
+    expect(html).to include("open since run 1 (2 runs)", "column &quot;batch_id&quot; added")
+    expect(html).not_to include(File.join(dir, "private"))
+  end
+
   it "writes the page to disk, creating the directory" do
     path = File.join(dir, "nested", "report.html")
     described_class.write(report, path)

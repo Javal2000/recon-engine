@@ -66,6 +66,28 @@ RSpec.describe ReconEngine::CLI do
                                      "EXPLAINED by the row-level breaks")
   end
 
+  it "keeps run history with --db and reports on the next day" do
+    db      = File.join(dir, "history.sqlite3")
+    outputs = ["--json", File.join(dir, "report.json"), "--html", File.join(dir, "report.html")]
+    demo    = ["demo", "--dir", File.join(dir, "demo"), "--rows", "300", "--db", db, "--no-agent", *outputs]
+
+    cli(*demo, "--quiet")
+    cli(*demo, "--next-day")
+
+    expect(stdout.string).to include("overnight: 9 replayed rows removed", "HISTORY", "compared with run 1",
+                                     "still open", "History: recorded as run 2")
+    expect(stdout.string).to include(%(schema changed  warehouse: column "batch_id" added))
+  end
+
+  it "fails cleanly when the history file is unusable" do
+    db = File.join(dir, "history.sqlite3")
+    File.write(db, "this is not a database, only some text long enough to have a header")
+
+    expect(reconcile(manifest["paths"]["ledger"], manifest["paths"]["warehouse"], "--db", db))
+      .to eq(described_class::EXIT_ERROR)
+    expect(stderr.string).to include("run history #{db}")
+  end
+
   it "generates data and prints the manifest summary" do
     expect(cli("generate", "--dir", File.join(dir, "gen"), "--rows", "100", "--seed", "5")).to eq(0)
     expect(JSON.parse(stdout.string)).to include("fault_counts", "paths")
